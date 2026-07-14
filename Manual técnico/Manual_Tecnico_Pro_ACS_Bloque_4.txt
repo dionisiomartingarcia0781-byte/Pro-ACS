@@ -1,0 +1,136 @@
+MANUAL TÉCNICO – PRO ACS BLOQUE 4
+
+6.  ARQUITECTURA GENERAL DE LA APLICACIÓN
+
+Pro ACS está organizado en varios módulos independientes. Cada uno de
+ellos desarrolla una función concreta dentro del proceso de simulación.
+Esta separación facilita el mantenimiento del programa y permite
+modificar una parte del modelo sin afectar al resto de componentes.
+
+Aunque internamente la aplicación está formada por diferentes archivos,
+todos ellos colaboran para ejecutar una única secuencia de cálculo.
+
+6.1 Interfaz de usuario
+
+La interfaz constituye el punto de comunicación entre el usuario y el
+motor de simulación.
+
+Su función consiste en recoger los parámetros de entrada, validar la
+información introducida y presentar posteriormente los resultados
+obtenidos mediante tablas, indicadores y gráficos.
+
+La interfaz no realiza cálculos energéticos relevantes; actúa como
+elemento de configuración y visualización.
+
+6.2 Motor de simulación
+
+El motor representa el núcleo de Pro ACS.
+
+Es el responsable de ejecutar la simulación temporal, mantener el estado
+energético del sistema, aplicar el modelo matemático y garantizar la
+coherencia del balance durante todo el proceso.
+
+Toda modificación del comportamiento físico de la aplicación termina
+reflejándose en este módulo.
+
+6.3 Gestión de perfiles
+
+Los perfiles de demanda permiten distribuir el consumo de ACS a lo largo
+del tiempo.
+
+El programa puede utilizar perfiles predefinidos o perfiles
+personalizados creados por el usuario, normalizando su distribución para
+que represente correctamente la demanda total introducida.
+
+De esta forma se separa la cantidad total consumida de la forma en que
+dicho consumo se reparte durante el periodo de simulación.
+
+6.4 Presentación de resultados
+
+Una vez finalizado el cálculo, la información generada se procesa para
+facilitar su interpretación.
+
+Los resultados pueden mostrarse de forma numérica o gráfica, permitiendo
+analizar tanto el comportamiento instantáneo como los valores acumulados
+del sistema.
+
+7.  INTERPRETACIÓN DE LOS RESULTADOS
+
+Los resultados obtenidos por Pro ACS deben interpretarse como una
+representación del comportamiento del modelo definido por el usuario.
+
+Cada indicador responde a una pregunta concreta sobre el funcionamiento
+de la instalación.
+
+La demanda refleja la energía requerida para cubrir el consumo previsto.
+
+La producción representa la energía suministrada por el generador
+durante la simulación.
+
+La energía almacenada describe la evolución del contenido energético del
+depósito y permite identificar periodos de carga y descarga.
+
+Las pérdidas cuantifican la energía cedida al ambiente según el modelo
+adoptado.
+
+Los balances energéticos permiten comprobar la coherencia global de la
+simulación y verificar que la energía producida, almacenada y consumida
+mantiene la conservación establecida por el modelo.
+
+Los gráficos deben interpretarse como herramientas de análisis. Su
+objetivo es mostrar tendencias, identificar picos de demanda, detectar
+limitaciones de potencia o comprender el comportamiento del depósito a
+lo largo del tiempo.
+
+8.  LIMITACIONES DEL MODELO
+
+Como cualquier herramienta de simulación, Pro ACS adopta una serie de
+simplificaciones para obtener tiempos de cálculo reducidos sin perder
+utilidad práctica.
+
+El modelo no pretende describir todos los fenómenos físicos presentes en
+una instalación real.
+
+Entre las principales limitaciones se encuentran:
+
+-   La instalación se representa mediante parámetros globales y no
+    mediante un modelo espacial detallado.
+
+-   Los fenómenos transitorios rápidos quedan condicionados por la
+    resolución temporal elegida.
+
+-   Determinados efectos hidráulicos se representan de forma
+    simplificada cuando su influencia sobre el balance energético es
+    reducida.
+
+-   El depósito se modela energéticamente. Cuando el modelo no incorpora
+    estratificación, la energía almacenada se considera distribuida de
+    forma uniforme.
+
+-   Las pérdidas responden al modelo implementado por Pro ACS y no
+    sustituyen a un cálculo detallado de redes o aislamiento.
+
+Estas simplificaciones permiten que la herramienta mantenga un
+equilibrio entre rapidez, facilidad de uso y representatividad de los
+resultados.
+
+9.  CONCLUSIONES
+
+Pro ACS utiliza un modelo energético orientado a la simulación de
+instalaciones de Agua Caliente Sanitaria mediante balances de energía y
+resolución temporal discreta.
+
+El fundamento físico, el modelo matemático y la secuencia del algoritmo
+forman un conjunto coherente cuyo objetivo es reproducir el
+comportamiento global de la instalación con un coste computacional
+reducido.
+
+El usuario debe interpretar los resultados dentro del alcance del
+modelo, comprendiendo tanto las hipótesis empleadas como las
+limitaciones inherentes a cualquier simulación simplificada.
+
+El conocimiento de estos aspectos permite utilizar la aplicación con
+criterio técnico y valorar adecuadamente la información obtenida en cada
+estudio.
+
+FIN DEL MANUAL

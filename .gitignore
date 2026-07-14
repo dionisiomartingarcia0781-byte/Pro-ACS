@@ -1,0 +1,25 @@
+# Vercel
+.vercel/
+
+# Node
+node_modules/
+
+# Variables de entorno
+.env
+.env.*
+
+# VS Code
+.vscode/
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Archivos temporales
+*.tmp

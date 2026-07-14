@@ -1,0 +1,139 @@
+MANUAL TÉCNICO – PRO ACS BLOQUE 2
+
+3.  MODELO MATEMÁTICO
+
+3.1 Introducción
+
+Una vez establecidos los fundamentos físicos del sistema, Pro ACS
+transforma dichos conceptos en un conjunto de ecuaciones que permiten
+simular el comportamiento de la instalación de forma repetible y
+coherente.
+
+El objetivo del modelo no es reproducir todos los fenómenos físicos
+existentes en una instalación real, sino representar aquellos que tienen
+una influencia significativa sobre el balance energético global. Para
+ello se emplea un modelo de parámetros concentrados, donde cada elemento
+de la instalación queda representado mediante variables energéticas en
+lugar de una descripción espacial detallada.
+
+Este enfoque reduce enormemente el tiempo de cálculo y permite realizar
+simulaciones completas en pocos segundos manteniendo un nivel de
+precisión adecuado para estudios de diseño, comparación de alternativas
+y evaluación energética.
+
+3.2 Resolución temporal
+
+Toda la simulación se desarrolla mediante intervalos de tiempo
+consecutivos.
+
+Cada intervalo constituye un estado independiente de la instalación y
+representa un pequeño periodo durante el cual se consideran constantes
+las condiciones de funcionamiento.
+
+Al finalizar cada intervalo, el estado obtenido pasa a convertirse en la
+condición inicial del siguiente. De este modo se reproduce la evolución
+temporal del sistema sin necesidad de resolver ecuaciones diferenciales
+complejas.
+
+La calidad de la simulación depende en gran medida de la resolución
+temporal empleada. Un intervalo más corto permite describir con mayor
+detalle las variaciones de demanda, mientras que uno más largo reduce el
+tiempo de cálculo a costa de suavizar dichas variaciones.
+
+3.3 Demanda energética
+
+El punto de partida de cada intervalo es la determinación de la demanda
+de ACS.
+
+El perfil seleccionado por el usuario distribuye el consumo a lo largo
+del periodo de simulación y establece la fracción de demanda
+correspondiente a cada intervalo.
+
+A partir del caudal de agua solicitado y del salto térmico definido por
+las temperaturas de entrada y de servicio, el programa obtiene la
+energía necesaria para satisfacer dicho consumo.
+
+Esta energía constituye la demanda útil del intervalo.
+
+3.4 Modelo de pérdidas
+
+Las pérdidas térmicas se calculan una vez conocida la demanda útil.
+
+En lugar de introducir un caudal de retorno constante, el modelo adopta
+una representación energética basada en un porcentaje de la demanda. De
+esta forma, la energía perdida evoluciona de manera proporcional al uso
+de la instalación.
+
+Posteriormente el programa determina el caudal equivalente asociado a
+esa energía, de forma que pueda integrarse correctamente en el resto del
+balance sin alterar la coherencia física del modelo.
+
+Este planteamiento presenta varias ventajas:
+
+-   evita sobredimensionar las pérdidas en periodos de baja utilización;
+-   simplifica la introducción de datos por parte del usuario;
+-   mantiene una relación directa entre demanda y pérdidas;
+-   facilita la comparación entre distintas simulaciones.
+
+3.5 Demanda total
+
+La demanda total del sistema es el resultado de combinar la demanda útil
+y las pérdidas energéticas obtenidas para el mismo intervalo.
+
+Esta magnitud representa la energía que realmente debe ser suministrada
+por el conjunto formado por el depósito y el sistema productor.
+
+No toda esa energía será necesariamente generada de forma instantánea,
+ya que parte de ella puede encontrarse almacenada en el depósito de
+acumulación.
+
+3.6 Estado energético del depósito
+
+El depósito constituye la reserva energética del sistema.
+
+Durante cada intervalo su contenido energético evoluciona como
+consecuencia de cuatro procesos principales:
+
+-   energía almacenada procedente del intervalo anterior;
+-   energía aportada por el generador;
+-   energía extraída para atender la demanda;
+-   pérdidas térmicas del propio sistema.
+
+El resultado es un nuevo estado energético que servirá como condición
+inicial del siguiente intervalo de cálculo.
+
+Este procedimiento garantiza la continuidad temporal de la simulación y
+evita tratar cada paso como un cálculo aislado.
+
+3.7 Producción energética
+
+El sistema productor actúa únicamente cuando la energía disponible en el
+depósito resulta insuficiente o cuando la estrategia de control
+determina la necesidad de recargar la acumulación.
+
+La producción queda limitada por la potencia máxima disponible del
+equipo. Esto significa que, aunque exista demanda suficiente, el
+generador no podrá aportar más energía de la permitida por sus
+características nominales.
+
+Esta limitación reproduce uno de los comportamientos fundamentales de
+cualquier instalación real y permite evaluar situaciones en las que la
+potencia instalada resulta insuficiente.
+
+3.8 Balance energético
+
+Una vez calculadas todas las contribuciones energéticas del intervalo,
+el programa verifica el balance global del sistema.
+
+Toda la energía disponible debe quedar repartida entre:
+
+-   energía suministrada a la demanda;
+-   energía almacenada;
+-   pérdidas;
+-   energía producida.
+
+Este balance constituye el mecanismo principal de comprobación interna
+del modelo y garantiza que los resultados obtenidos sean coherentes
+desde el punto de vista energético.
+
+FIN DEL BLOQUE 2

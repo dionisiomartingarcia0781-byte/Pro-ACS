@@ -1,0 +1,2177 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+
+  <meta
+    name="description"
+    content="Aplicación de simulación y evaluación de instalaciones de Agua Caliente Sanitaria."
+  >
+
+  <title>PRO ACS</title>
+
+  <link
+    rel="stylesheet"
+    href="./css/app.css"
+  >
+
+  <style>
+    .custom-profile-editor {
+      display: grid;
+      gap: 1rem;
+      padding: 1rem;
+      border: 1px solid var(--border-color, #d7dde5);
+      border-radius: 0.85rem;
+      background: var(--surface-soft, #f7f9fc);
+    }
+
+    .custom-profile-editor__header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .custom-profile-total {
+      padding: 0.55rem 0.8rem;
+      border-radius: 999px;
+      background: #e9f7ef;
+      color: #176b3a;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .custom-profile-total--invalid {
+      background: #fff0f0;
+      color: #a52828;
+    }
+
+    .custom-profile-bars {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.65rem 1rem;
+    }
+
+    .custom-profile-hour {
+      display: grid;
+      grid-template-columns: 3.25rem minmax(7rem, 1fr) 4.5rem;
+      align-items: center;
+      gap: 0.65rem;
+      padding: 0.55rem 0.65rem;
+      border-radius: 0.65rem;
+      background: var(--surface, #ffffff);
+      border: 1px solid var(--border-color, #e1e6ed);
+    }
+
+    .custom-profile-hour__label {
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .custom-profile-hour input[type="range"] {
+      width: 100%;
+      cursor: pointer;
+    }
+
+    .custom-profile-hour__value {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .custom-profile-hour__value input {
+      width: 100%;
+      min-width: 0;
+      padding: 0.4rem;
+      text-align: right;
+    }
+
+    .custom-profile-editor__actions {
+      display: flex;
+      gap: 0.65rem;
+      flex-wrap: wrap;
+    }
+
+    .button--small {
+      padding: 0.55rem 0.85rem;
+      font-size: 0.9rem;
+    }
+
+    .custom-profile-source {
+      display: none !important;
+    }
+
+    @media (max-width: 900px) {
+      .custom-profile-bars {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 520px) {
+      .custom-profile-hour {
+        grid-template-columns: 2.8rem minmax(0, 1fr) 4.25rem;
+        gap: 0.45rem;
+        padding: 0.5rem;
+      }
+    }
+
+    .exchanger-config {
+      display: grid;
+      gap: 1rem;
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border-color, #d7dde5);
+    }
+
+    .exchanger-config[hidden] {
+      display: none !important;
+    }
+
+    .exchanger-config__section {
+      display: grid;
+      gap: 0.75rem;
+      padding: 0.9rem;
+      border: 1px solid var(--border-color, #d7dde5);
+      border-radius: 0.75rem;
+      background: var(--surface-soft, #f7f9fc);
+    }
+
+    .exchanger-config__section h5 {
+      margin: 0;
+      font-size: 0.95rem;
+    }
+
+    .exchanger-config__section p {
+      margin: 0;
+      color: var(--text-muted, #657080);
+      font-size: 0.88rem;
+    }
+
+    .exchanger-type-note {
+      margin-top: 0.35rem;
+      color: var(--text-muted, #657080);
+      font-size: 0.85rem;
+    }
+
+    .tank-card__header {
+      align-items: flex-start;
+    }
+
+    .charts-dashboard {
+      display: grid;
+      gap: 1.5rem;
+    }
+
+    .chart-panel {
+      display: grid;
+      gap: 0.9rem;
+      padding: 1rem;
+      border: 1px solid var(--border-color, #d7dde5);
+      border-radius: 0.9rem;
+      background: var(--surface, #ffffff);
+    }
+
+    .chart-panel__header {
+      display: grid;
+      gap: 0.3rem;
+    }
+
+    .chart-panel__header h4 {
+      margin: 0;
+      font-size: 1.05rem;
+    }
+
+    .chart-panel__header p {
+      margin: 0;
+      color: var(--text-muted, #657080);
+      font-size: 0.9rem;
+    }
+
+    .charts-dashboard .chart-container {
+      overflow-x: auto;
+    }
+
+    .summary-panel {
+      display: grid;
+      gap: 0.9rem;
+      padding: 1rem;
+      border: 1px solid var(--border-color, #d7dde5);
+      border-radius: 0.9rem;
+      background: var(--surface, #ffffff);
+    }
+
+    .summary-panel__header {
+      display: grid;
+      gap: 0.3rem;
+    }
+
+    .summary-panel__header h4 {
+      margin: 0;
+      font-size: 1.05rem;
+    }
+
+    .summary-panel__header p {
+      margin: 0;
+      color: var(--text-muted, #657080);
+      font-size: 0.9rem;
+    }
+
+    .summary-table td:last-child,
+    .summary-table th:last-child {
+      text-align: right;
+    }
+
+    .hourly-operation-table {
+      min-width: 1120px;
+    }
+
+    .hourly-operation-table th,
+    .hourly-operation-table td {
+      white-space: nowrap;
+      text-align: right;
+    }
+
+    .hourly-operation-table th:first-child,
+    .hourly-operation-table td:first-child {
+      text-align: left;
+    }
+
+  </style>
+
+</head>
+
+<body>
+  <div id="app" class="app">
+
+    <!-- =====================================================
+         CABECERA GENERAL
+         ===================================================== -->
+
+    <header class="app-header">
+      <div class="app-header__brand">
+        <div>
+          <h1 class="app-header__title">
+            PRO ACS
+          </h1>
+
+          <p class="app-header__subtitle">
+            Simulación y evaluación de instalaciones
+            de Agua Caliente Sanitaria
+          </p>
+        </div>
+      </div>
+
+      <div class="app-header__actions">
+        <button
+          id="newProjectButton"
+          type="button"
+          class="button button--secondary"
+        >
+          Nuevo
+        </button>
+
+        <button
+          id="openProjectButton"
+          type="button"
+          class="button button--secondary"
+        >
+          Abrir
+        </button>
+
+        <button
+          id="saveProjectButton"
+          type="button"
+          class="button button--secondary"
+        >
+          Guardar
+        </button>
+
+        <input
+          id="projectFileInput"
+          type="file"
+          accept=".json,.acs.json,application/json"
+          hidden
+        >
+      </div>
+    </header>
+
+
+    <!-- =====================================================
+         INDICADOR DE PASOS
+         ===================================================== -->
+
+    <nav
+      class="stepper"
+      aria-label="Progreso del proyecto"
+    >
+      <button
+        id="stepProjectButton"
+        type="button"
+        class="stepper__item stepper__item--active"
+        data-screen="project"
+        aria-current="step"
+      >
+        <span class="stepper__number">1</span>
+
+        <span class="stepper__content">
+          <strong>Proyecto</strong>
+          <small>Datos generales</small>
+        </span>
+      </button>
+
+      <button
+        id="stepInputsButton"
+        type="button"
+        class="stepper__item"
+        data-screen="inputs"
+      >
+        <span class="stepper__number">2</span>
+
+        <span class="stepper__content">
+          <strong>Datos técnicos</strong>
+          <small>Configuración de cálculo</small>
+        </span>
+      </button>
+
+      <button
+        id="stepResultsButton"
+        type="button"
+        class="stepper__item"
+        data-screen="results"
+        disabled
+      >
+        <span class="stepper__number">3</span>
+
+        <span class="stepper__content">
+          <strong>Resultados</strong>
+          <small>Análisis e informe</small>
+        </span>
+      </button>
+    </nav>
+
+
+    <!-- =====================================================
+         MENSAJES GENERALES
+         ===================================================== -->
+
+    <div
+      id="globalMessage"
+      class="global-message"
+      role="status"
+      aria-live="polite"
+      hidden
+    ></div>
+
+
+    <!-- =====================================================
+         CONTENIDO PRINCIPAL
+         ===================================================== -->
+
+    <main class="app-main">
+
+      <!-- ===================================================
+           PANTALLA 1 · DATOS DEL PROYECTO
+           =================================================== -->
+
+      <section
+        id="projectScreen"
+        class="screen screen--active"
+        data-screen="project"
+      >
+        <div class="screen__header">
+          <div>
+            <p class="screen__eyebrow">
+              Paso 1 de 3
+            </p>
+
+            <h2 class="screen__title">
+              Datos generales del proyecto
+            </h2>
+
+            <p class="screen__description">
+              Esta información identificará el proyecto
+              y aparecerá en la portada del informe.
+            </p>
+          </div>
+        </div>
+
+        <form
+          id="projectForm"
+          class="form-card"
+          novalidate
+        >
+          <div class="form-grid form-grid--two-columns">
+
+            <div class="form-field form-field--full">
+              <label for="projectName">
+                Nombre del proyecto
+              </label>
+
+              <input
+                id="projectName"
+                name="projectName"
+                type="text"
+                autocomplete="organization-title"
+                maxlength="150"
+                required
+              >
+
+              <small class="form-field__help">
+                Nombre identificativo del estudio o instalación.
+              </small>
+            </div>
+
+            <div class="form-field">
+              <label for="projectDesigner">
+                Proyectista
+              </label>
+
+              <input
+                id="projectDesigner"
+                name="projectDesigner"
+                type="text"
+                autocomplete="name"
+                maxlength="150"
+                required
+              >
+            </div>
+
+            <div class="form-field">
+              <label for="projectDate">
+                Fecha
+              </label>
+
+              <input
+                id="projectDate"
+                name="projectDate"
+                type="date"
+                required
+              >
+            </div>
+
+            <div class="form-field form-field--full">
+              <label for="projectAddress">
+                Dirección
+              </label>
+
+              <input
+                id="projectAddress"
+                name="projectAddress"
+                type="text"
+                autocomplete="street-address"
+                maxlength="200"
+                required
+              >
+            </div>
+
+            <div class="form-field">
+              <label for="projectPostalCode">
+                Código postal
+              </label>
+
+              <input
+                id="projectPostalCode"
+                name="projectPostalCode"
+                type="text"
+                inputmode="numeric"
+                autocomplete="postal-code"
+                maxlength="10"
+                required
+              >
+            </div>
+
+            <div class="form-field">
+              <label for="projectCity">
+                Ciudad
+              </label>
+
+              <input
+                id="projectCity"
+                name="projectCity"
+                type="text"
+                autocomplete="address-level2"
+                maxlength="100"
+                required
+              >
+            </div>
+
+          </div>
+
+          <div class="screen-actions">
+            <div></div>
+
+            <button
+              id="continueToInputsButton"
+              type="submit"
+              class="button button--primary"
+            >
+              Continuar
+            </button>
+          </div>
+        </form>
+      </section>
+
+
+      <!-- ===================================================
+           PANTALLA 2 · DATOS TÉCNICOS
+           =================================================== -->
+
+      <section
+        id="inputsScreen"
+        class="screen"
+        data-screen="inputs"
+        hidden
+      >
+        <div class="screen__header">
+          <div>
+            <p class="screen__eyebrow">
+              Paso 2 de 3
+            </p>
+
+            <h2 class="screen__title">
+              Datos técnicos de la instalación
+            </h2>
+
+            <p class="screen__description">
+              Introduce la demanda, la configuración hidráulica,
+              la acumulación y los equipos de generación.
+            </p>
+          </div>
+        </div>
+
+        <form
+          id="simulationForm"
+          novalidate
+        >
+
+          <!-- DEMANDA -->
+
+          <section class="form-card">
+            <div class="form-card__header">
+              <div>
+                <h3>Demanda de ACS</h3>
+
+                <p>
+                  La demanda diaria se reparte según
+                  el perfil horario seleccionado y puede concentrarse
+                  dentro de cada hora mediante un perfil intrahorario.
+                </p>
+              </div>
+            </div>
+
+            <div class="form-grid form-grid--three-columns">
+
+              <div class="form-field">
+                <label for="demandProfileType">
+                  Perfil de demanda
+                </label>
+
+                <select
+                  id="demandProfileType"
+                  name="demandProfileType"
+                  required
+                >
+                  <option value="residential">
+                    Viviendas
+                  </option>
+
+                  <option value="hotel">
+                    Hoteles
+                  </option>
+
+                  <option value="gym">
+                    Gimnasio
+                  </option>
+
+                  <option value="custom">
+                    A medida
+                  </option>
+                </select>
+              </div>
+
+              <div class="form-field">
+                <label for="intrahourDemandProfileType">
+                  Perfil dentro de cada hora
+                </label>
+
+                <select
+                  id="intrahourDemandProfileType"
+                  name="intrahourDemandProfileType"
+                  required
+                >
+                  <option value="uniform" selected>
+                    Uniforme durante la hora
+                  </option>
+
+                  <option value="front-loaded-30">
+                    Concentrado al inicio — 30 min
+                  </option>
+
+                  <option value="centered-30">
+                    Concentrado al centro — 30 min
+                  </option>
+
+                  <option value="back-loaded-30">
+                    Concentrado al final — 30 min
+                  </option>
+
+                  <option value="front-loaded-15">
+                    Pico intenso al inicio — 15 min
+                  </option>
+
+                  <option value="centered-15">
+                    Pico intenso al centro — 15 min
+                  </option>
+
+                  <option value="double-peak">
+                    Doble pico
+                  </option>
+                </select>
+
+                <small class="form-field__help">
+                  El perfil intrahorario no modifica el consumo total de cada hora.
+                  Solo cambia su concentración dentro de los 60 minutos.
+                </small>
+              </div>
+
+              <div class="form-field">
+                <label for="numberOfPeople">
+                  Número de personas
+                </label>
+
+                <div class="input-with-unit">
+                  <input
+                    id="numberOfPeople"
+                    name="numberOfPeople"
+                    type="number"
+                    min="1"
+                    step="1"
+                    value="100"
+                    required
+                  >
+
+                  <span>personas</span>
+                </div>
+              </div>
+
+              <div class="form-field">
+                <label for="unitVolumeAt60CPerPersonDayL">
+                  Volumen unitario
+                </label>
+
+                <div class="input-with-unit">
+                  <input
+                    id="unitVolumeAt60CPerPersonDayL"
+                    name="unitVolumeAt60CPerPersonDayL"
+                    type="number"
+                    min="0.1"
+                    step="0.1"
+                    value="28"
+                    required
+                  >
+
+                  <span>L/persona·día</span>
+                </div>
+
+                <small class="form-field__help">
+                  Volumen referido a 60 °C.
+                </small>
+              </div>
+
+              <div class="form-field">
+                <label for="totalDailyDemandAt60CL">
+                  Demanda diaria total
+                </label>
+
+                <div class="input-with-unit">
+                  <input
+                    id="totalDailyDemandAt60CL"
+                    name="totalDailyDemandAt60CL"
+                    type="text"
+                    readonly
+                  >
+
+                  <span>L/día a 60 °C</span>
+                </div>
+              </div>
+
+              <div
+                id="customDemandProfileContainer"
+                class="form-field form-field--full"
+                hidden
+              >
+                <div class="custom-profile-editor">
+                  <div class="custom-profile-editor__header">
+                    <div>
+                      <label id="customDemandProfileLabel">
+                        Reparto horario personalizado
+                      </label>
+
+                      <small class="form-field__help">
+                        Ajusta el porcentaje de consumo de cada hora.
+                        La suma debe ser exactamente 100 %.
+                      </small>
+                    </div>
+
+                    <div
+                      id="customProfileTotal"
+                      class="custom-profile-total"
+                      aria-live="polite"
+                    >
+                      Total: 100 %
+                    </div>
+                  </div>
+
+                  <div
+                    id="customProfileBars"
+                    class="custom-profile-bars"
+                    aria-labelledby="customDemandProfileLabel"
+                  ></div>
+
+                  <div class="custom-profile-editor__actions">
+                    <button
+                      id="normalizeCustomProfileButton"
+                      type="button"
+                      class="button button--secondary button--small"
+                    >
+                      Normalizar a 100 %
+                    </button>
+
+                    <button
+                      id="resetCustomProfileButton"
+                      type="button"
+                      class="button button--secondary button--small"
+                    >
+                      Restablecer perfil
+                    </button>
+                  </div>
+
+                  <textarea
+                    id="customDemandProfile"
+                    name="customDemandProfile"
+                    rows="5"
+                    class="custom-profile-source"
+                    aria-hidden="true"
+                    tabindex="-1"
+                  >1, 1, 1, 1, 1, 2, 5, 8, 8, 5, 4, 4, 4, 4, 4, 5, 6, 7, 8, 7, 6, 4, 2, 2</textarea>
+                </div>
+              </div>
+
+              <div class="form-field form-field--full">
+                <label for="generatedDemandProfile">
+                  Perfil horario generado
+                </label>
+
+                <textarea
+                  id="generatedDemandProfile"
+                  name="generatedDemandProfile"
+                  rows="4"
+                  readonly
+                ></textarea>
+
+                <small class="form-field__help">
+                  Valores horarios en litros a 60 °C.
+                </small>
+              </div>
+
+            </div>
+          </section>
+
+
+          <!-- TEMPERATURAS Y RECIRCULACIÓN -->
+
+          <section class="form-card">
+            <div class="form-card__header">
+              <div>
+                <h3>Temperaturas y recirculación</h3>
+
+                <p>
+                  Condiciones térmicas de cálculo
+                  y porcentaje de pérdidas de la instalación.
+                </p>
+              </div>
+            </div>
+
+            <div class="form-grid form-grid--four-columns">
+
+              <div class="form-field">
+                <label for="storageTemperatureC">
+                  Temperatura de acumulación
+                </label>
+
+                <div class="input-with-unit">
+                  <input
+                    id="storageTemperatureC"
+                    name="storageTemperatureC"
+                    type="number"
+                    step="0.1"
+                    value="70"
+                    required
+                  >
+
+                  <span>°C</span>
+                </div>
+              </div>
+
+              <div class="form-field">
+                <label for="useTemperatureC">
+                  Temperatura de uso
+                </label>
+
+                <div class="input-with-unit">
+                  <input
+                    id="useTemperatureC"
+                    name="useTemperatureC"
+                    type="number"
+                    step="0.1"
+                    value="45"
+                    required
+                  >
+
+                  <span>°C</span>
+                </div>
+              </div>
+
+              <div class="form-field">
+                <label for="networkTemperatureC">
+                  Temperatura de red
+                </label>
+
+                <div class="input-with-unit">
+                  <input
+                    id="networkTemperatureC"
+                    name="networkTemperatureC"
+                    type="number"
+                    step="0.1"
+                    value="10"
+                    required
+                  >
+
+                  <span>°C</span>
+                </div>
+              </div>
+
+              <div class="form-field">
+                <label for="lossPercent">
+                  Pérdidas de recirculación
+                </label>
+
+                <div class="input-with-unit">
+                  <input
+                    id="lossPercent"
+                    name="lossPercent"
+                    type="number"
+                    min="0"
+                    max="40"
+                    step="0.5"
+                    value="15"
+                    required
+                  >
+
+                  <span>% demanda</span>
+                </div>
+
+                <small class="form-field__help">
+                  Porcentaje de pérdidas energéticas de la instalación respecto a la demanda diaria de ACS.
+                  El caudal de recirculación será calculado automáticamente por el motor.
+                </small>
+              </div>
+
+            </div>
+          </section>
+
+
+          <!-- DEPÓSITOS -->
+
+          <section class="form-card">
+            <div class="form-card__header">
+              <div>
+                <h3>Acumulación</h3>
+
+                <p>
+                  Configuración de uno o dos depósitos
+                  conectados en serie.
+                </p>
+              </div>
+            </div>
+
+            <div class="form-grid form-grid--three-columns">
+
+              <div class="form-field">
+                <label for="tankCount">
+                  Número de depósitos
+                </label>
+
+                <select
+                  id="tankCount"
+                  name="tankCount"
+                  required
+                >
+                  <option value="1">
+                    1 depósito
+                  </option>
+
+                  <option value="2" selected>
+                    2 depósitos
+                  </option>
+                </select>
+              </div>
+
+            </div>
+
+            <div class="tank-grid">
+
+              <article class="tank-card">
+                <div class="tank-card__header">
+                  <div>
+                    <h4>Depósito D1</h4>
+                    <p class="exchanger-type-note">
+                      Configura el volumen y el sistema de calentamiento.
+                    </p>
+                  </div>
+                </div>
+
+                <div class="form-grid form-grid--two-columns">
+
+                  <div class="form-field">
+                    <label for="d1VolumeL">
+                      Volumen
+                    </label>
+
+                    <div class="input-with-unit">
+                      <input
+                        id="d1VolumeL"
+                        name="d1VolumeL"
+                        type="number"
+                        min="1"
+                        step="1"
+                        value="500"
+                        required
+                      >
+
+                      <span>L</span>
+                    </div>
+                  </div>
+
+                  <div class="form-field">
+                    <label for="d1ExchangerType">
+                      Tipo de intercambiador
+                    </label>
+
+                    <select
+                      id="d1ExchangerType"
+                      name="d1ExchangerType"
+                      required
+                    >
+                      <option value="plate" selected>
+                        Intercambiador de placas
+                      </option>
+
+                      <option value="immersed">
+                        Serpentín sumergido
+                      </option>
+                    </select>
+                  </div>
+
+                  <div class="form-field">
+                    <label for="d1ExchangerPowerKW">
+                      Potencia del intercambiador
+                    </label>
+
+                    <div class="input-with-unit">
+                      <input
+                        id="d1ExchangerPowerKW"
+                        name="d1ExchangerPowerKW"
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value="40"
+                        required
+                      >
+
+                      <span>kW</span>
+                    </div>
+
+                    <small class="form-field__help">
+                      Para serpentín, potencia nominal declarada por el fabricante.
+                    </small>
+                  </div>
+
+                </div>
+
+                <div
+                  id="d1ImmersedConfig"
+                  class="exchanger-config"
+                  hidden
+                >
+                  <section class="exchanger-config__section">
+                    <div>
+                      <h5>Condiciones nominales del fabricante</h5>
+                      <p>
+                        Condiciones térmicas asociadas a la potencia nominal.
+                      </p>
+                    </div>
+
+                    <div class="form-grid form-grid--two-columns">
+                      <div class="form-field">
+                        <label for="d1NominalPrimaryInletTemperatureC">
+                          Ida primaria nominal
+                        </label>
+
+                        <div class="input-with-unit">
+                          <input
+                            id="d1NominalPrimaryInletTemperatureC"
+                            name="d1NominalPrimaryInletTemperatureC"
+                            type="number"
+                            step="0.1"
+                            value="80"
+                          >
+                          <span>°C</span>
+                        </div>
+                      </div>
+
+                      <div class="form-field">
+                        <label for="d1NominalPrimaryOutletTemperatureC">
+                          Retorno primario nominal
+                        </label>
+
+                        <div class="input-with-unit">
+                          <input
+                            id="d1NominalPrimaryOutletTemperatureC"
+                            name="d1NominalPrimaryOutletTemperatureC"
+                            type="number"
+                            step="0.1"
+                            value="60"
+                          >
+                          <span>°C</span>
+                        </div>
+                      </div>
+
+                      <div class="form-field">
+                        <label for="d1NominalSecondaryInletTemperatureC">
+                          Entrada secundaria nominal
+                        </label>
+
+                        <div class="input-with-unit">
+                          <input
+                            id="d1NominalSecondaryInletTemperatureC"
+                            name="d1NominalSecondaryInletTemperatureC"
+                            type="number"
+                            step="0.1"
+                            value="10"
+                          >
+                          <span>°C</span>
+                        </div>
+                      </div>
+
+                      <div class="form-field">
+                        <label for="d1NominalSecondaryOutletTemperatureC">
+                          Salida secundaria nominal
+                        </label>
+
+                        <div class="input-with-unit">
+                          <input
+                            id="d1NominalSecondaryOutletTemperatureC"
+                            name="d1NominalSecondaryOutletTemperatureC"
+                            type="number"
+                            step="0.1"
+                            value="45"
+                          >
+                          <span>°C</span>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="exchanger-config__section">
+                    <div>
+                      <h5>Condiciones reales de funcionamiento</h5>
+                      <p>
+                        Temperaturas reales previstas en el circuito primario.
+                      </p>
+                    </div>
+
+                    <div class="form-grid form-grid--two-columns">
+                      <div class="form-field">
+                        <label for="d1ActualPrimaryInletTemperatureC">
+                          Ida primaria real
+                        </label>
+
+                        <div class="input-with-unit">
+                          <input
+                            id="d1ActualPrimaryInletTemperatureC"
+                            name="d1ActualPrimaryInletTemperatureC"
+                            type="number"
+                            step="0.1"
+                            value="75"
+                          >
+                          <span>°C</span>
+                        </div>
+                      </div>
+
+                      <div class="form-field">
+                        <label for="d1ActualPrimaryOutletTemperatureC">
+                          Retorno primario real
+                        </label>
+
+                        <div class="input-with-unit">
+                          <input
+                            id="d1ActualPrimaryOutletTemperatureC"
+                            name="d1ActualPrimaryOutletTemperatureC"
+                            type="number"
+                            step="0.1"
+                            value="55"
+                          >
+                          <span>°C</span>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </article>
+
+
+              <article
+                id="tank2Card"
+                class="tank-card"
+              >
+                <div class="tank-card__header">
+                  <div>
+                    <h4>Depósito D2</h4>
+                    <p class="exchanger-type-note">
+                      Configura el volumen y el sistema de calentamiento.
+                    </p>
+                  </div>
+                </div>
+
+                <div class="form-grid form-grid--two-columns">
+
+                  <div class="form-field">
+                    <label for="d2VolumeL">
+                      Volumen
+                    </label>
+
+                    <div class="input-with-unit">
+                      <input
+                        id="d2VolumeL"
+                        name="d2VolumeL"
+                        type="number"
+                        min="1"
+                        step="1"
+                        value="300"
+                      >
+
+                      <span>L</span>
+                    </div>
+                  </div>
+
+                  <div class="form-field">
+                    <label for="d2ExchangerType">
+                      Tipo de intercambiador
+                    </label>
+
+                    <select
+                      id="d2ExchangerType"
+                      name="d2ExchangerType"
+                    >
+                      <option value="plate" selected>
+                        Intercambiador de placas
+                      </option>
+
+                      <option value="immersed">
+                        Serpentín sumergido
+                      </option>
+                    </select>
+                  </div>
+
+                  <div class="form-field">
+                    <label for="d2ExchangerPowerKW">
+                      Potencia del intercambiador
+                    </label>
+
+                    <div class="input-with-unit">
+                      <input
+                        id="d2ExchangerPowerKW"
+                        name="d2ExchangerPowerKW"
+                        type="number"
+                        min="0"
+                        step="0.1"
+                        value="30"
+                      >
+
+                      <span>kW</span>
+                    </div>
+
+                    <small class="form-field__help">
+                      Para serpentín, potencia nominal declarada por el fabricante.
+                    </small>
+                  </div>
+
+                </div>
+
+                <div
+                  id="d2ImmersedConfig"
+                  class="exchanger-config"
+                  hidden
+                >
+                  <section class="exchanger-config__section">
+                    <div>
+                      <h5>Condiciones nominales del fabricante</h5>
+                      <p>
+                        Condiciones térmicas asociadas a la potencia nominal.
+                      </p>
+                    </div>
+
+                    <div class="form-grid form-grid--two-columns">
+                      <div class="form-field">
+                        <label for="d2NominalPrimaryInletTemperatureC">
+                          Ida primaria nominal
+                        </label>
+
+                        <div class="input-with-unit">
+                          <input
+                            id="d2NominalPrimaryInletTemperatureC"
+                            name="d2NominalPrimaryInletTemperatureC"
+                            type="number"
+                            step="0.1"
+                            value="80"
+                          >
+                          <span>°C</span>
+                        </div>
+                      </div>
+
+                      <div class="form-field">
+                        <label for="d2NominalPrimaryOutletTemperatureC">
+                          Retorno primario nominal
+                        </label>
+
+                        <div class="input-with-unit">
+                          <input
+                            id="d2NominalPrimaryOutletTemperatureC"
+                            name="d2NominalPrimaryOutletTemperatureC"
+                            type="number"
+                            step="0.1"
+                            value="60"
+                          >
+                          <span>°C</span>
+                        </div>
+                      </div>
+
+                      <div class="form-field">
+                        <label for="d2NominalSecondaryInletTemperatureC">
+                          Entrada secundaria nominal
+                        </label>
+
+                        <div class="input-with-unit">
+                          <input
+                            id="d2NominalSecondaryInletTemperatureC"
+                            name="d2NominalSecondaryInletTemperatureC"
+                            type="number"
+                            step="0.1"
+                            value="10"
+                          >
+                          <span>°C</span>
+                        </div>
+                      </div>
+
+                      <div class="form-field">
+                        <label for="d2NominalSecondaryOutletTemperatureC">
+                          Salida secundaria nominal
+                        </label>
+
+                        <div class="input-with-unit">
+                          <input
+                            id="d2NominalSecondaryOutletTemperatureC"
+                            name="d2NominalSecondaryOutletTemperatureC"
+                            type="number"
+                            step="0.1"
+                            value="45"
+                          >
+                          <span>°C</span>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section class="exchanger-config__section">
+                    <div>
+                      <h5>Condiciones reales de funcionamiento</h5>
+                      <p>
+                        Temperaturas reales previstas en el circuito primario.
+                      </p>
+                    </div>
+
+                    <div class="form-grid form-grid--two-columns">
+                      <div class="form-field">
+                        <label for="d2ActualPrimaryInletTemperatureC">
+                          Ida primaria real
+                        </label>
+
+                        <div class="input-with-unit">
+                          <input
+                            id="d2ActualPrimaryInletTemperatureC"
+                            name="d2ActualPrimaryInletTemperatureC"
+                            type="number"
+                            step="0.1"
+                            value="75"
+                          >
+                          <span>°C</span>
+                        </div>
+                      </div>
+
+                      <div class="form-field">
+                        <label for="d2ActualPrimaryOutletTemperatureC">
+                          Retorno primario real
+                        </label>
+
+                        <div class="input-with-unit">
+                          <input
+                            id="d2ActualPrimaryOutletTemperatureC"
+                            name="d2ActualPrimaryOutletTemperatureC"
+                            type="number"
+                            step="0.1"
+                            value="55"
+                          >
+                          <span>°C</span>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </article>
+
+            </div>
+          </section>
+
+
+          <!-- GENERADOR Y CONTROL -->
+
+          <section class="form-card">
+            <div class="form-card__header">
+              <div>
+                <h3>Generador y control</h3>
+
+                <p>
+                  Potencia disponible y criterio
+                  de arranque de los equipos.
+                </p>
+              </div>
+            </div>
+
+            <div class="form-grid form-grid--three-columns">
+
+              <div class="form-field">
+                <label for="generatorPowerKW">
+                  Potencia del generador
+                </label>
+
+                <div class="input-with-unit">
+                  <input
+                    id="generatorPowerKW"
+                    name="generatorPowerKW"
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value="60"
+                    required
+                  >
+
+                  <span>kW</span>
+                </div>
+              </div>
+
+              <div class="form-field">
+                <label for="startThresholdPercent">
+                  Umbral de arranque
+                </label>
+
+                <div class="input-with-unit">
+                  <input
+                    id="startThresholdPercent"
+                    name="startThresholdPercent"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value="60"
+                    required
+                  >
+
+                  <span>%</span>
+                </div>
+              </div>
+
+              <div class="form-field form-field--checkbox">
+                <label class="checkbox-field">
+                  <input
+                    id="sanitaryCheck"
+                    name="sanitaryCheck"
+                    type="checkbox"
+                    checked
+                  >
+
+                  <span>
+                    Realizar comprobación sanitaria
+                    e incluirla en el informe.
+                  </span>
+                </label>
+              </div>
+
+            </div>
+          </section>
+
+
+          <!-- ACCIONES PANTALLA 2 -->
+
+          <div class="screen-actions">
+            <button
+              id="backToProjectButton"
+              type="button"
+              class="button button--secondary"
+            >
+              Anterior
+            </button>
+
+            <div class="screen-actions__right">
+              <button
+                id="saveInputsButton"
+                type="button"
+                class="button button--secondary"
+              >
+                Guardar
+              </button>
+
+              <button
+                id="calculateButton"
+                type="submit"
+                class="button button--primary"
+              >
+                Calcular
+              </button>
+            </div>
+          </div>
+
+        </form>
+      </section>
+
+
+      <!-- ===================================================
+           PANTALLA 3 · RESULTADOS
+           =================================================== -->
+
+      <section
+        id="resultsScreen"
+        class="screen"
+        data-screen="results"
+        hidden
+      >
+        <div class="screen__header">
+          <div>
+            <p class="screen__eyebrow">
+              Paso 3 de 3
+            </p>
+
+            <h2 class="screen__title">
+              Resultados y conclusiones
+            </h2>
+
+            <p class="screen__description">
+              Resultados correspondientes a las últimas
+              24 horas de simulación.
+            </p>
+          </div>
+
+          <div
+            id="simulationStatus"
+            class="calculation-status"
+          >
+            Sin calcular
+          </div>
+        </div>
+
+
+        <!-- RESUMEN DEL PROYECTO -->
+
+        <section class="result-section">
+          <div class="result-section__header">
+            <div>
+              <h3>Proyecto</h3>
+
+              <p>
+                Identificación del cálculo realizado.
+              </p>
+            </div>
+          </div>
+
+          <dl class="project-summary">
+            <div>
+              <dt>Proyecto</dt>
+              <dd id="resultProjectName">—</dd>
+            </div>
+
+            <div>
+              <dt>Proyectista</dt>
+              <dd id="resultProjectDesigner">—</dd>
+            </div>
+
+            <div>
+              <dt>Fecha</dt>
+              <dd id="resultProjectDate">—</dd>
+            </div>
+
+            <div>
+              <dt>Ubicación</dt>
+              <dd id="resultProjectLocation">—</dd>
+            </div>
+          </dl>
+        </section>
+
+
+        <!-- RESULTADOS GENERALES -->
+
+        <section class="result-section">
+          <div class="result-section__header">
+            <div>
+              <h3>Resultados generales</h3>
+
+              <p>
+                Balance energético, funcionamiento
+                e indicadores hidráulicos.
+              </p>
+            </div>
+          </div>
+
+          <div
+            id="generalResultsGrid"
+            class="result-card-grid"
+          >
+            <!-- Se rellenará desde app.js -->
+          </div>
+        </section>
+
+
+        <!-- ACUMULADORES -->
+
+        <section class="result-section">
+          <div class="result-section__header">
+            <div>
+              <h3>Acumulación y calentamiento</h3>
+
+              <p>
+                Resultados individuales y totales
+                de los depósitos.
+              </p>
+            </div>
+          </div>
+
+          <div class="table-wrapper">
+            <table class="result-table">
+              <thead>
+                <tr>
+                  <th>Elemento</th>
+                  <th>Volumen</th>
+                  <th>Potencia nominal</th>
+                  <th>Potencia efectiva media</th>
+                  <th>Energía máxima</th>
+                  <th>Tiempo calentamiento</th>
+                  <th>Carga mínima</th>
+                  <th>Funcionamiento</th>
+                </tr>
+              </thead>
+
+              <tbody id="tankResultsTableBody">
+                <tr>
+                  <td colspan="8">
+                    Sin resultados disponibles.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="technical-note">
+            <strong>Nota de proyecto:</strong>
+
+            El tiempo de calentamiento está determinado
+            por el par volumen–potencia de cada depósito.
+            El cálculo no considera consumos simultáneos
+            ni pérdidas térmicas. Su validez depende de las
+            condiciones particulares de cada proyecto y debe
+            ser comprobada por el proyectista.
+          </div>
+        </section>
+
+
+        <!-- VALORACIONES -->
+
+        <section class="result-section">
+          <div class="result-section__header">
+            <div>
+              <h3>Valoraciones</h3>
+
+              <p>
+                Evaluación sanitaria y de confort.
+              </p>
+            </div>
+          </div>
+
+          <div
+            id="assessmentsGrid"
+            class="assessment-grid"
+          >
+            <article
+              id="sanitaryAssessmentCard"
+              class="assessment-card"
+            >
+              <h4>Comprobación sanitaria</h4>
+
+              <p class="assessment-card__status">
+                Sin evaluar
+              </p>
+
+              <p class="assessment-card__message">
+                Ejecuta la simulación para obtener
+                la valoración.
+              </p>
+            </article>
+
+            <article
+              id="comfortAssessmentCard"
+              class="assessment-card"
+            >
+              <h4>Confort</h4>
+
+              <p class="assessment-card__status">
+                Sin evaluar
+              </p>
+
+              <p class="assessment-card__message">
+                Ejecuta la simulación para obtener
+                la valoración.
+              </p>
+            </article>
+
+
+          </div>
+        </section>
+
+
+        <!-- GRÁFICAS -->
+
+        <section class="result-section">
+          <div class="result-section__header">
+            <div>
+              <h3>Evolución durante las últimas 24 horas</h3>
+
+              <p>
+                Las dos gráficas y la tabla horaria se muestran
+                simultáneamente para facilitar la lectura del
+                comportamiento energético de la instalación.
+              </p>
+            </div>
+          </div>
+
+          <div class="charts-dashboard">
+
+            <article class="chart-panel">
+              <div class="chart-panel__header">
+                <h4>Consumo y generación</h4>
+
+                <p>
+                  Perfil horario de consumo, energía generada
+                  y potencia media total.
+                </p>
+              </div>
+
+              <div class="chart-container">
+                <canvas
+                  id="resultsChartEnergy"
+                  aria-label="Gráfica de consumo y generación"
+                ></canvas>
+              </div>
+
+              <div
+                id="chartLegendEnergy"
+                class="chart-legend"
+              ></div>
+            </article>
+
+
+            <article class="summary-panel">
+              <div class="summary-panel__header">
+                <h4>Balance horario de operación</h4>
+
+                <p>
+                  Demanda, pérdidas, energía entregada, energía generada
+                  y funcionamiento del generador durante cada una de las últimas 24 horas.
+                </p>
+              </div>
+
+              <div class="table-wrapper">
+                <table class="result-table summary-table hourly-operation-table">
+                  <thead>
+                    <tr>
+                      <th>Hora</th>
+                      <th>Energía demandada</th>
+                      <th>Pérdidas</th>
+                      <th>Energía entregada total</th>
+                      <th>Energía total generada</th>
+                      <th>Arranques</th>
+                      <th>Primer arranque</th>
+                      <th>Tiempo de funcionamiento</th>
+                    </tr>
+                  </thead>
+
+                  <tbody id="operatingSummaryTableBody">
+                    <tr>
+                      <td colspan="8">
+                        Sin resultados disponibles.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+
+            <article class="chart-panel">
+              <div class="chart-panel__header">
+                <h4>Carga de depósitos</h4>
+
+                <p>
+                  Evolución de la carga final horaria
+                  de cada acumulador.
+                </p>
+              </div>
+
+              <div class="chart-container">
+                <canvas
+                  id="resultsChartLoad"
+                  aria-label="Gráfica de carga de los depósitos"
+                ></canvas>
+              </div>
+
+              <div
+                id="chartLegendLoad"
+                class="chart-legend"
+              ></div>
+            </article>
+
+          </div>
+        </section>
+
+
+        <!-- CONCLUSIONES -->
+
+        <section class="result-section">
+          <div class="result-section__header">
+            <div>
+              <h3>Conclusiones</h3>
+
+              <p>
+                Resumen técnico generado a partir
+                de los resultados del cálculo.
+              </p>
+            </div>
+          </div>
+
+          <div
+            id="conclusionsContainer"
+            class="conclusions"
+          >
+            <p>
+              Sin conclusiones disponibles.
+            </p>
+          </div>
+        </section>
+
+
+        <!-- ACCIONES PANTALLA 3 -->
+
+        <div class="screen-actions">
+          <button
+            id="backToInputsButton"
+            type="button"
+            class="button button--secondary"
+          >
+            Modificar datos
+          </button>
+
+          <div class="screen-actions__right">
+            <button
+              id="saveResultsProjectButton"
+              type="button"
+              class="button button--secondary"
+            >
+              Guardar proyecto
+            </button>
+
+            <button
+              id="generatePdfButton"
+              type="button"
+              class="button button--primary"
+            >
+              Generar informe PDF
+            </button>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+
+    <!-- =====================================================
+         PIE DE PÁGINA
+         ===================================================== -->
+
+    <footer class="app-footer">
+      <p>
+        PRO ACS · Motor de simulación ACS
+      </p>
+
+      <p>
+        Los resultados deben ser revisados
+        y validados por el proyectista.
+      </p>
+    </footer>
+
+  </div>
+
+
+  <!-- =====================================================
+       SCRIPTS
+       ===================================================== -->
+
+  <!-- Motor validado: bloques 1 a 6 -->
+  <script src="./js/acs-simulation-engine.js"></script>
+
+  <!-- Capa de análisis y presentación -->
+  <script src="./js/block7-analysis.js"></script>
+
+  <!-- Abrir y guardar proyectos -->
+  <script src="./js/project-storage.js"></script>
+
+  <!-- Gráficas -->
+  <script src="./js/charts.js"></script>
+
+  <!-- Librería de generación PDF -->
+<script
+  src="https://cdn.jsdelivr.net/npm/jspdf@3.0.0/dist/jspdf.umd.min.js"
+></script>
+
+  <!-- Informe PDF -->
+  <script src="./js/report.js"></script>
+
+  <!-- Control general de la aplicación -->
+  <script src="./js/app.js"></script>
+
+
+  <script>
+    (() => {
+      const tankCountField =
+        document.getElementById("tankCount");
+
+      const exchangerControls = [
+        {
+          tank: 1,
+          typeField:
+            document.getElementById("d1ExchangerType"),
+          container:
+            document.getElementById("d1ImmersedConfig")
+        },
+        {
+          tank: 2,
+          typeField:
+            document.getElementById("d2ExchangerType"),
+          container:
+            document.getElementById("d2ImmersedConfig")
+        }
+      ];
+
+      function setContainerRequired(
+        container,
+        required
+      ) {
+        if (!container) {
+          return;
+        }
+
+        container
+          .querySelectorAll("input")
+          .forEach(
+            input => {
+              input.required = required;
+              input.disabled = !required;
+            }
+          );
+      }
+
+      function updateExchangerFields(
+        control
+      ) {
+        if (
+          !control.typeField ||
+          !control.container
+        ) {
+          return;
+        }
+
+        const tankIsEnabled =
+          control.tank === 1 ||
+          !tankCountField ||
+          tankCountField.value === "2";
+
+        const isImmersed =
+          tankIsEnabled &&
+          control.typeField.value === "immersed";
+
+        control.container.hidden =
+          !isImmersed;
+
+        setContainerRequired(
+          control.container,
+          isImmersed
+        );
+      }
+
+      function updateAllExchangerFields() {
+        exchangerControls.forEach(
+          updateExchangerFields
+        );
+      }
+
+      exchangerControls.forEach(
+        control => {
+          if (control.typeField) {
+            control.typeField.addEventListener(
+              "change",
+              updateAllExchangerFields
+            );
+          }
+        }
+      );
+
+      if (tankCountField) {
+        tankCountField.addEventListener(
+          "change",
+          updateAllExchangerFields
+        );
+      }
+
+      updateAllExchangerFields();
+    })();
+  </script>
+
+  <script>
+    (() => {
+      const DEFAULT_CUSTOM_PROFILE = [
+        1, 1, 1, 1, 1, 2, 5, 8, 8, 5, 4, 4,
+        4, 4, 4, 5, 6, 7, 8, 7, 6, 4, 2, 2
+      ];
+
+      const sourceField = document.getElementById("customDemandProfile");
+      const barsContainer = document.getElementById("customProfileBars");
+      const totalElement = document.getElementById("customProfileTotal");
+      const normalizeButton = document.getElementById(
+        "normalizeCustomProfileButton"
+      );
+      const resetButton = document.getElementById(
+        "resetCustomProfileButton"
+      );
+
+      if (
+        !sourceField ||
+        !barsContainer ||
+        !totalElement ||
+        !normalizeButton ||
+        !resetButton
+      ) {
+        return;
+      }
+
+      let values = parseProfile(sourceField.value);
+
+      function parseProfile(rawValue) {
+        const parsed = String(rawValue)
+          .split(/[,\s;]+/)
+          .map((value) => Number.parseFloat(value))
+          .filter((value) => Number.isFinite(value));
+
+        if (parsed.length !== 24) {
+          return [...DEFAULT_CUSTOM_PROFILE];
+        }
+
+        return parsed.map((value) => Math.max(0, value));
+      }
+
+      function roundValue(value) {
+        return Math.round((value + Number.EPSILON) * 10) / 10;
+      }
+
+      function getTotal() {
+        return roundValue(
+          values.reduce((sum, value) => sum + Number(value || 0), 0)
+        );
+      }
+
+      function syncSourceField() {
+        sourceField.value = values
+          .map((value) => roundValue(value))
+          .join(", ");
+
+        sourceField.dispatchEvent(
+          new Event("input", { bubbles: true })
+        );
+
+        sourceField.dispatchEvent(
+          new Event("change", { bubbles: true })
+        );
+      }
+
+      function updateTotal() {
+        const total = getTotal();
+        const isValid = Math.abs(total - 100) < 0.05;
+
+        totalElement.textContent = `Total: ${total.toLocaleString("es-ES")} %`;
+        totalElement.classList.toggle(
+          "custom-profile-total--invalid",
+          !isValid
+        );
+      }
+
+      function updateControls(hourIndex) {
+        const row = barsContainer.querySelector(
+          `[data-hour-index="${hourIndex}"]`
+        );
+
+        if (!row) {
+          return;
+        }
+
+        row.querySelector('input[type="range"]').value = values[hourIndex];
+        row.querySelector('input[type="number"]').value = values[hourIndex];
+      }
+
+      function setHourValue(hourIndex, rawValue) {
+        const nextValue = Math.min(
+          100,
+          Math.max(0, Number.parseFloat(rawValue) || 0)
+        );
+
+        values[hourIndex] = roundValue(nextValue);
+        updateControls(hourIndex);
+        updateTotal();
+        syncSourceField();
+      }
+
+      function createHourControl(hourIndex) {
+        const row = document.createElement("div");
+        const hour = String(hourIndex).padStart(2, "0");
+
+        row.className = "custom-profile-hour";
+        row.dataset.hourIndex = String(hourIndex);
+        row.innerHTML = `
+          <span class="custom-profile-hour__label">${hour} h</span>
+
+          <input
+            type="range"
+            min="0"
+            max="25"
+            step="0.1"
+            value="${values[hourIndex]}"
+            aria-label="Porcentaje a las ${hour}:00"
+          >
+
+          <label class="custom-profile-hour__value">
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.1"
+              value="${values[hourIndex]}"
+              aria-label="Valor porcentual a las ${hour}:00"
+            >
+            <span>%</span>
+          </label>
+        `;
+
+        const rangeInput = row.querySelector('input[type="range"]');
+        const numberInput = row.querySelector('input[type="number"]');
+
+        rangeInput.addEventListener("input", (event) => {
+          setHourValue(hourIndex, event.target.value);
+        });
+
+        numberInput.addEventListener("input", (event) => {
+          setHourValue(hourIndex, event.target.value);
+        });
+
+        return row;
+      }
+
+      function renderControls() {
+        barsContainer.innerHTML = "";
+
+        values.forEach((_, hourIndex) => {
+          barsContainer.appendChild(createHourControl(hourIndex));
+        });
+
+        updateTotal();
+        syncSourceField();
+      }
+
+      function normalizeProfile() {
+        const total = getTotal();
+
+        if (total <= 0) {
+          values = [...DEFAULT_CUSTOM_PROFILE];
+        } else {
+          values = values.map((value) =>
+            roundValue((value / total) * 100)
+          );
+
+          const normalizedTotal = getTotal();
+          const difference = roundValue(100 - normalizedTotal);
+          const largestIndex = values.indexOf(Math.max(...values));
+
+          values[largestIndex] = roundValue(
+            Math.max(0, values[largestIndex] + difference)
+          );
+        }
+
+        renderControls();
+      }
+
+      normalizeButton.addEventListener("click", normalizeProfile);
+
+      resetButton.addEventListener("click", () => {
+        values = [...DEFAULT_CUSTOM_PROFILE];
+        renderControls();
+      });
+
+      sourceField.addEventListener("change", () => {
+        const externalValues = parseProfile(sourceField.value);
+
+        if (
+          externalValues.some(
+            (value, index) => value !== values[index]
+          )
+        ) {
+          values = externalValues;
+          renderControls();
+        }
+      });
+
+      renderControls();
+    })();
+  </script>
+
+</body>
+</html>
