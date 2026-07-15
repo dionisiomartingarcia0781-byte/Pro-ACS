@@ -2052,24 +2052,7 @@ function drawEnergyPage(data) {
     label: "Energía útil"
   });
 
-  drawMetricCard({
-    x: x + 132,
-    y: 154,
-    width: 46,
-    height: 60,
-    label: "Déficit",
-    value: formatEnergy(data.energy.deficitKWh),
-    note:
-      numberOrNull(data.energy.deficitKWh) > 0.01
-        ? "Existe demanda no cubierta"
-        : "Sin déficit relevante",
-    level:
-      numberOrNull(data.energy.deficitKWh) > 0.01
-        ? "warning"
-        : "success"
-  });
-
-  drawSectionLabel(
+    drawSectionLabel(
     "Funcionamiento de los intercambiadores",
     x,
     226
