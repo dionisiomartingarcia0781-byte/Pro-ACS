@@ -6108,7 +6108,7 @@ function calculateSanitaryStatus(
       .averageTemperatureC;
 
   const below60C =
-    temperatureC < 60;
+    temperatureC < 59.99
 
   return {
     enabled: true,
