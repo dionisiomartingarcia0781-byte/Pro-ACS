@@ -6127,6 +6127,159 @@ function calculateSanitaryStatus(
   };
 }
 
+
+/**
+ * Combina dos aplicaciones parciales del generador realizadas dentro
+ * del mismo minuto.
+ *
+ * Se utiliza para integrar el balance energético con un esquema
+ * simétrico de punto medio:
+ *
+ * 1. media generación;
+ * 2. transporte hidráulico del minuto;
+ * 3. media generación.
+ *
+ * De esta forma generación y extracción se consideran simultáneas
+ * dentro del intervalo, evitando el sesgo de descargar completamente
+ * antes de cargar o de cargar completamente antes de descargar.
+ */
+function combinePartialGenerationResults(
+  firstGeneration,
+  secondGeneration,
+  totalIntervalMinutes = 1
+) {
+  requirePositiveNumber(
+    totalIntervalMinutes,
+    "totalIntervalMinutes"
+  );
+
+  const tankCount =
+    Math.max(
+      firstGeneration.tankResults.length,
+      secondGeneration.tankResults.length
+    );
+
+  const tankResults =
+    new Array(tankCount);
+
+  for (
+    let tankIndex = 0;
+    tankIndex < tankCount;
+    tankIndex += 1
+  ) {
+    const first =
+      firstGeneration.tankResults[tankIndex];
+
+    const second =
+      secondGeneration.tankResults[tankIndex];
+
+    const absorbedEnergyKWh =
+      (first?.absorbedEnergyKWh || 0) +
+      (second?.absorbedEnergyKWh || 0);
+
+    const effectiveMinutes =
+      (first?.effectiveMinutes || 0) +
+      (second?.effectiveMinutes || 0);
+
+    tankResults[tankIndex] = {
+      tankId:
+        first?.tankId ??
+        second?.tankId,
+
+      exchangerType:
+        first?.exchangerType ??
+        second?.exchangerType,
+
+      nominalExchangerPowerKW:
+        first?.nominalExchangerPowerKW ??
+        second?.nominalExchangerPowerKW ??
+        0,
+
+      availableExchangerPowerKW:
+        first?.availableExchangerPowerKW ??
+        second?.availableExchangerPowerKW ??
+        0,
+
+      maximumAbsorbablePowerKW:
+        Math.max(
+          first?.maximumAbsorbablePowerKW || 0,
+          second?.maximumAbsorbablePowerKW || 0
+        ),
+
+      thermalCorrectionFactor:
+        second?.thermalCorrectionFactor ??
+        first?.thermalCorrectionFactor ??
+        1,
+
+      assignedPowerKW:
+        (
+          (first?.assignedPowerKW || 0) +
+          (second?.assignedPowerKW || 0)
+        ) / 2,
+
+      effectivePowerKW:
+        absorbedEnergyKWh *
+        ACS_CONSTANTS.MINUTES_PER_HOUR /
+        totalIntervalMinutes,
+
+      absorbedEnergyKWh,
+
+      effectiveMinutes,
+
+      initialExchangerDiagnostic:
+        first?.initialExchangerDiagnostic ??
+        second?.initialExchangerDiagnostic ??
+        null,
+
+      finalExchangerDiagnostic:
+        second?.finalExchangerDiagnostic ??
+        first?.finalExchangerDiagnostic ??
+        null,
+
+      finalTankState:
+        second?.finalTankState ??
+        first?.finalTankState ??
+        null
+    };
+  }
+
+  const requestedEnergyKWh =
+    firstGeneration.requestedEnergyKWh +
+    secondGeneration.requestedEnergyKWh;
+
+  const absorbedEnergyKWh =
+    firstGeneration.absorbedEnergyKWh +
+    secondGeneration.absorbedEnergyKWh;
+
+  return {
+    generatorRunning:
+      firstGeneration.generatorRunning ||
+      secondGeneration.generatorRunning,
+
+    generatorPowerKW:
+      firstGeneration.generatorPowerKW,
+
+    requestedEnergyKWh,
+
+    absorbedEnergyKWh,
+
+    unusedEnergyKWh:
+      Math.max(
+        0,
+        requestedEnergyKWh -
+        absorbedEnergyKWh
+      ),
+
+    initialExchangerDiagnostics:
+      firstGeneration.initialExchangerDiagnostics,
+
+    finalExchangerDiagnostics:
+      secondGeneration.finalExchangerDiagnostics,
+
+    tankResults
+  };
+}
+
 /**
  * Resuelve un minuto completo.
  *
@@ -6166,6 +6319,10 @@ function resolveSimulationMinute(
     );
   }
 
+  const intervalMinutes = 1;
+  const halfIntervalMinutes =
+    intervalMinutes / 2;
+
   const initialTankStates =
     getTankStates(tanks);
 
@@ -6181,6 +6338,35 @@ function resolveSimulationMinute(
       generatorState,
       minuteIndex
     });
+
+  /*
+   * Integración simétrica del balance energético:
+   *
+   * E(n+1) = E(n) + integral(Pgen - Psalida) dt
+   *
+   * Se aproxima mediante un esquema de punto medio:
+   *
+   * 1. se aplica media generación;
+   * 2. se resuelve el transporte hidráulico del minuto;
+   * 3. se aplica la otra media generación.
+   *
+   * Así se evita imponer artificialmente:
+   * - descarga completa seguida de carga;
+   * - o carga completa seguida de descarga.
+   */
+  const firstHalfGeneration =
+    applyGeneratorForMinute({
+      config,
+      tanks,
+      generatorState,
+      intervalMinutes:
+        halfIntervalMinutes
+    });
+
+  const energyBeforeHydraulicsKWh =
+    calculateTotalStoredEnergyKWh(
+      tanks
+    );
 
   const iterativeResolution =
     resolveMinuteIteratively({
@@ -6200,22 +6386,25 @@ function resolveSimulationMinute(
   const hydraulicEnergyExtractedKWh =
     Math.max(
       0,
-      initialStoredEnergyKWh -
+      energyBeforeHydraulicsKWh -
         energyAfterHydraulicsKWh
     );
 
-  /**
-   * La generación se aplica después de la extracción hidráulica.
-   * Por tanto, el serpentín se corrige con el estado real del depósito
-   * existente inmediatamente antes de la carga del minuto.
-   */
-  const generation =
+  const secondHalfGeneration =
     applyGeneratorForMinute({
       config,
       tanks,
       generatorState,
-      intervalMinutes: 1
+      intervalMinutes:
+        halfIntervalMinutes
     });
+
+  const generation =
+    combinePartialGenerationResults(
+      firstHalfGeneration,
+      secondHalfGeneration,
+      intervalMinutes
+    );
 
   const finalStoredEnergyKWh =
     calculateTotalStoredEnergyKWh(
@@ -6226,7 +6415,7 @@ function resolveSimulationMinute(
     calculateSanitaryStatus({
       config,
       tanks,
-      intervalMinutes: 1
+      intervalMinutes
     });
 
   const demandCoverage =
@@ -6278,12 +6467,6 @@ function resolveSimulationMinute(
 
     generation,
 
-    /**
-     * Acceso directo a los diagnósticos de los intercambiadores.
-     *
-     * Se mantiene también dentro de generation para compatibilidad
-     * y trazabilidad.
-     */
     exchangers: {
       beforeGeneration:
         generation
@@ -6299,6 +6482,11 @@ function resolveSimulationMinute(
     energies: {
       initialStoredEnergyKWh,
 
+      /*
+       * Se conserva este campo por compatibilidad.
+       * Ahora representa el estado tras la primera media generación
+       * y la extracción hidráulica.
+       */
       energyAfterHydraulicsKWh,
 
       finalStoredEnergyKWh,
@@ -6452,6 +6640,7 @@ const ACSBlock4 = {
   resolveMinuteIteratively,
 
   calculateSanitaryStatus,
+  combinePartialGenerationResults,
 
   resolveSimulationMinute,
   simulateMinutes
