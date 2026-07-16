@@ -3,17 +3,19 @@
 /**
  * ============================================================
  * PRO ACS
- * GRÁFICAS DE RESULTADOS
+ * GRÁFICAS DE DEMANDA Y RESULTADOS
+ * Versión 2.1.0
  * ============================================================
  *
  * Responsabilidades:
  *
- * - Dibujar las gráficas de las últimas 24 horas.
- * - Mostrar consumo y generación.
- * - Mostrar carga final de los depósitos.
+ * - Mostrar el perfil horario de demanda en la pantalla de entrada.
+ * - Representar una única serie de barras en litros y un eje derecho
+ *   con la energía equivalente de esas mismas barras.
+ * - Dibujar por separado las gráficas de carga, energía y el cronograma de funcionamiento.
+ * - Exportar cualquiera de las cuatro gráficas para el informe PDF.
  *
- * Este archivo no realiza cálculos físicos ni valoraciones.
- * Solo representa los datos preparados por block7-analysis.js.
+ * Este archivo no modifica el motor de simulación.
  */
 
 
@@ -22,45 +24,50 @@
  * ============================================================ */
 
 const ACS_CHARTS_CONFIG = Object.freeze({
-  VERSION: "1.2.0",
+  VERSION: "2.1.0",
 
   MINIMUM_WIDTH_PX: 960,
+  DEMAND_MINIMUM_WIDTH_PX: 720,
 
   HEIGHT_PX: 420,
+  DEMAND_HEIGHT_PX: 300,
 
   DEVICE_PIXEL_RATIO_LIMIT: 2,
 
   PADDING: Object.freeze({
     top: 34,
-    right: 70,
+    right: 72,
     bottom: 58,
-    left: 70
+    left: 72
   }),
 
   COLORS: Object.freeze({
-    demand: "#94a3b8",
+    demand: "#7c3aed",
+    demandSoft: "#c4b5fd",
 
     tank1: "#2563eb",
+    tank2: "#16a34a",
 
-    tank2: "#7c3aed",
+    tank1Energy: "#93c5fd",
+    tank2Energy: "#86efac",
 
-    totalPower: "#dc2626",
+    generatorPower: "#dc2626",
+    exchanger1Power: "#1d4ed8",
+    exchanger2Power: "#15803d",
 
-    sanitaryReference: "#b91c1c",
-
-    storageReference: "#0f766e",
+    generatorMaximum: "#f87171",
+    exchanger1Maximum: "#60a5fa",
+    exchanger2Maximum: "#4ade80",
 
     comfortTightReference: "#d97706",
-
     comfortComfortableReference: "#15803d",
 
     axis: "#64748b",
-
     grid: "#e2e8f0",
-
     text: "#334155",
-
-    background: "#ffffff"
+    background: "#ffffff",
+    tooltipBackground: "#0f172a",
+    tooltipText: "#ffffff"
   })
 });
 
@@ -70,15 +77,21 @@ const ACS_CHARTS_CONFIG = Object.freeze({
  * ============================================================ */
 
 const ACSChartsState = {
-  currentView: "energy",
+  currentView: "load",
 
   chartData: null,
+
+  demandProfileData: null,
 
   canvases: new Map(),
 
   contexts: new Map(),
 
-  resizeFrame: null
+  resizeFrame: null,
+
+  demandHoverHandler: null,
+
+  demandLeaveHandler: null
 };
 
 
@@ -93,11 +106,8 @@ class ACSChartsError extends Error {
   ) {
     super(message);
 
-    this.name =
-      "ACSChartsError";
-
-    this.details =
-      details;
+    this.name = "ACSChartsError";
+    this.details = details;
   }
 }
 
@@ -106,9 +116,6 @@ class ACSChartsError extends Error {
  * UTILIDADES
  * ============================================================ */
 
-/**
- * Comprueba si un valor es un número finito.
- */
 function isFiniteNumber(value) {
   return (
     typeof value === "number" &&
@@ -117,9 +124,16 @@ function isFiniteNumber(value) {
 }
 
 
-/**
- * Limita un número a un intervalo.
- */
+function finiteOrFallbackForChart(
+  value,
+  fallback = 0
+) {
+  return isFiniteNumber(value)
+    ? value
+    : fallback;
+}
+
+
 function clamp(
   value,
   minimum,
@@ -135,9 +149,6 @@ function clamp(
 }
 
 
-/**
- * Formatea números para los ejes y leyendas.
- */
 function formatNumber(
   value,
   maximumFractionDigits = 1
@@ -156,9 +167,6 @@ function formatNumber(
 }
 
 
-/**
- * Obtiene los valores numéricos válidos.
- */
 function getFiniteValues(values) {
   if (!Array.isArray(values)) {
     return [];
@@ -170,19 +178,15 @@ function getFiniteValues(values) {
 }
 
 
-/**
- * Obtiene el máximo de varias series.
- */
 function getMaximumFromSeries(
   seriesCollection,
   fallback = 1
 ) {
   const values =
-    seriesCollection
-      .flatMap(
-        series =>
-          getFiniteValues(series)
-      );
+    seriesCollection.flatMap(
+      series =>
+        getFiniteValues(series)
+    );
 
   if (values.length === 0) {
     return fallback;
@@ -195,34 +199,6 @@ function getMaximumFromSeries(
 }
 
 
-/**
- * Obtiene el mínimo de varias series.
- */
-function getMinimumFromSeries(
-  seriesCollection,
-  fallback = 0
-) {
-  const values =
-    seriesCollection
-      .flatMap(
-        series =>
-          getFiniteValues(series)
-      );
-
-  if (values.length === 0) {
-    return fallback;
-  }
-
-  return Math.min(
-    fallback,
-    ...values
-  );
-}
-
-
-/**
- * Redondea un máximo para obtener una escala legible.
- */
 function getNiceMaximum(value) {
   if (
     !isFiniteNumber(value) ||
@@ -254,40 +230,90 @@ function getNiceMaximum(value) {
     niceNormalized = 10;
   }
 
-  return (
-    niceNormalized *
-    magnitude
+  return niceNormalized * magnitude;
+}
+
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+
+function createDefaultHours() {
+  return Array.from(
+    { length: 24 },
+    (_value, hourIndex) => ({
+      hourIndex,
+      label:
+        `${String(hourIndex).padStart(2, "0")}:00`
+    })
   );
 }
 
 
 /**
- * Escapa texto para insertarlo en HTML.
+ * Energía necesaria para calentar un litro de agua.
+ *
+ * 1,163 Wh/(L·K) = 0,001163 kWh/(L·K)
  */
-function escapeHtml(value) {
-  return String(
-    value ?? ""
-  )
-    .replaceAll(
-      "&",
-      "&amp;"
-    )
-    .replaceAll(
-      "<",
-      "&lt;"
-    )
-    .replaceAll(
-      ">",
-      "&gt;"
-    )
-    .replaceAll(
-      '"',
-      "&quot;"
-    )
-    .replaceAll(
-      "'",
-      "&#039;"
+function calculateEquivalentEnergyKWh(
+  volumeL,
+  referenceTemperatureC,
+  networkTemperatureC
+) {
+  if (
+    !isFiniteNumber(volumeL) ||
+    !isFiniteNumber(referenceTemperatureC) ||
+    !isFiniteNumber(networkTemperatureC)
+  ) {
+    return null;
+  }
+
+  const temperatureDifference =
+    Math.max(
+      0,
+      referenceTemperatureC -
+      networkTemperatureC
     );
+
+  return (
+    volumeL *
+    temperatureDifference *
+    0.001163
+  );
+}
+
+
+/* ============================================================
+ * IDENTIFICADORES DE CANVAS Y LEYENDAS
+ * ============================================================ */
+
+function getCanvasIdForView(view) {
+  const ids = {
+    demand: "demandProfileChart",
+    load: "resultsChartLoad",
+    hourlyEnergy: "resultsChartHourlyEnergy",
+    power: "resultsChartPower"
+  };
+
+  return ids[view] || null;
+}
+
+
+function getLegendIdForView(view) {
+  const ids = {
+    demand: "demandProfileChartLegend",
+    load: "chartLegendLoad",
+    hourlyEnergy: "chartLegendHourlyEnergy",
+    power: "chartLegendPower"
+  };
+
+  return ids[view] || null;
 }
 
 
@@ -295,35 +321,15 @@ function escapeHtml(value) {
  * CANVAS
  * ============================================================ */
 
-/**
- * Obtiene y prepara el canvas.
- */
-function getCanvasIdForView(view) {
-  const ids = {
-    energy: "resultsChartEnergy",
-    load: "resultsChartLoad"
-  };
-
-  return ids[view] || "resultsChartEnergy";
-}
-
-
-function getLegendIdForView(view) {
-  const ids = {
-    energy: "chartLegendEnergy",
-    load: "chartLegendLoad"
-  };
-
-  return ids[view] || "chartLegendEnergy";
-}
-
-
-/**
- * Obtiene y prepara el canvas de una vista concreta.
- */
-function prepareCanvas(view = "energy") {
+function prepareCanvas(view) {
   const canvasId =
     getCanvasIdForView(view);
+
+  if (!canvasId) {
+    throw new ACSChartsError(
+      `Vista gráfica no válida: ${view}.`
+    );
+  }
 
   const canvas =
     document.getElementById(
@@ -341,22 +347,30 @@ function prepareCanvas(view = "energy") {
       ".chart-container"
     );
 
-  const availableWidth =
-    container
-      ? container.clientWidth - 22
+  const minimumWidth =
+    view === "demand"
+      ? ACS_CHARTS_CONFIG
+          .DEMAND_MINIMUM_WIDTH_PX
       : ACS_CHARTS_CONFIG
           .MINIMUM_WIDTH_PX;
 
+  const cssHeight =
+    view === "demand"
+      ? ACS_CHARTS_CONFIG
+          .DEMAND_HEIGHT_PX
+      : ACS_CHARTS_CONFIG
+          .HEIGHT_PX;
+
+  const availableWidth =
+    container
+      ? container.clientWidth - 22
+      : minimumWidth;
+
   const cssWidth =
     Math.max(
-      ACS_CHARTS_CONFIG
-        .MINIMUM_WIDTH_PX,
+      minimumWidth,
       availableWidth
     );
-
-  const cssHeight =
-    ACS_CHARTS_CONFIG
-      .HEIGHT_PX;
 
   const pixelRatio =
     Math.min(
@@ -401,36 +415,25 @@ function prepareCanvas(view = "energy") {
     0
   );
 
-  ACSChartsState
-    .canvases
-    .set(
-      view,
-      canvas
-    );
+  ACSChartsState.canvases.set(
+    view,
+    canvas
+  );
 
-  ACSChartsState
-    .contexts
-    .set(
-      view,
-      context
-    );
+  ACSChartsState.contexts.set(
+    view,
+    context
+  );
 
   return {
     canvas,
     context,
-
-    width:
-      cssWidth,
-
-    height:
-      cssHeight
+    width: cssWidth,
+    height: cssHeight
   };
 }
 
 
-/**
- * Limpia el canvas.
- */
 function clearCanvas(
   context,
   width,
@@ -461,9 +464,6 @@ function clearCanvas(
  * ÁREA DE GRÁFICA
  * ============================================================ */
 
-/**
- * Calcula las dimensiones internas.
- */
 function getPlotArea(
   width,
   height
@@ -500,9 +500,6 @@ function getPlotArea(
 }
 
 
-/**
- * Convierte un índice horario en una coordenada X.
- */
 function getHourCenterX(
   hourIndex,
   plot
@@ -518,9 +515,24 @@ function getHourCenterX(
 }
 
 
-/**
- * Convierte un valor en coordenada Y.
- */
+function getSeriesX(
+  index,
+  pointCount,
+  plot
+) {
+  if (pointCount <= 1) {
+    return plot.left;
+  }
+
+  return (
+    plot.left +
+    plot.width *
+    index /
+    (pointCount - 1)
+  );
+}
+
+
 function valueToY(
   value,
   minimum,
@@ -553,9 +565,6 @@ function valueToY(
  * EJES Y REJILLA
  * ============================================================ */
 
-/**
- * Dibuja el eje horizontal y las horas.
- */
 function drawHorizontalAxis(
   context,
   plot,
@@ -645,9 +654,6 @@ function drawHorizontalAxis(
 }
 
 
-/**
- * Dibuja un eje vertical.
- */
 function drawVerticalAxis(
   context,
   plot,
@@ -769,8 +775,8 @@ function drawVerticalAxis(
 
   context.translate(
     isRight
-      ? axisX + 48
-      : axisX - 48,
+      ? axisX + 49
+      : axisX - 49,
     (
       plot.top +
       plot.bottom
@@ -801,7 +807,6 @@ function drawVerticalAxis(
   );
 
   context.restore();
-
   context.restore();
 }
 
@@ -810,9 +815,6 @@ function drawVerticalAxis(
  * ELEMENTOS GRÁFICOS
  * ============================================================ */
 
-/**
- * Dibuja una serie de barras.
- */
 function drawBarSeries(
   context,
   values,
@@ -823,19 +825,24 @@ function drawBarSeries(
     minimum = 0,
     maximum,
     color,
-    groupIndex = 0,
-    groupCount = 1
+    opacity = 1,
+    widthFactor = 0.72
   } = options;
 
   const hourWidth =
     plot.width / 24;
 
-  const totalBarWidth =
-    hourWidth * 0.72;
+  const barWidth =
+    hourWidth *
+    widthFactor;
 
-  const individualBarWidth =
-    totalBarWidth /
-    groupCount;
+  context.save();
+
+  context.fillStyle =
+    color;
+
+  context.globalAlpha =
+    opacity;
 
   values.forEach(
     (
@@ -852,17 +859,6 @@ function drawBarSeries(
           plot
         );
 
-      const groupStartX =
-        centerX -
-        totalBarWidth / 2;
-
-      const x =
-        groupStartX +
-        individualBarWidth *
-        groupIndex +
-        individualBarWidth *
-        0.08;
-
       const y =
         valueToY(
           value,
@@ -877,27 +873,100 @@ function drawBarSeries(
           plot.bottom - y
         );
 
-      const width =
-        individualBarWidth *
-        0.84;
-
-      context.fillStyle =
-        color;
-
       context.fillRect(
-        x,
+        centerX - barWidth / 2,
         y,
-        width,
+        barWidth,
         height
       );
     }
   );
+
+  context.restore();
 }
 
 
-/**
- * Dibuja una línea.
- */
+function drawStackedBarSeries(
+  context,
+  seriesCollection,
+  options
+) {
+  const {
+    plot,
+    maximum,
+    colors
+  } = options;
+
+  const hourWidth =
+    plot.width / 24;
+
+  const barWidth =
+    hourWidth * 0.78;
+
+  for (
+    let hourIndex = 0;
+    hourIndex < 24;
+    hourIndex += 1
+  ) {
+    let accumulatedValue = 0;
+
+    seriesCollection.forEach(
+      (
+        series,
+        seriesIndex
+      ) => {
+        const value =
+          finiteOrFallbackForChart(
+            series[hourIndex],
+            0
+          );
+
+        if (value <= 0) {
+          return;
+        }
+
+        const centerX =
+          getHourCenterX(
+            hourIndex,
+            plot
+          );
+
+        const yTop =
+          valueToY(
+            accumulatedValue + value,
+            0,
+            maximum,
+            plot
+          );
+
+        const yBottom =
+          valueToY(
+            accumulatedValue,
+            0,
+            maximum,
+            plot
+          );
+
+        context.fillStyle =
+          colors[seriesIndex];
+
+        context.fillRect(
+          centerX - barWidth / 2,
+          yTop,
+          barWidth,
+          Math.max(
+            0,
+            yBottom - yTop
+          )
+        );
+
+        accumulatedValue += value;
+      }
+    );
+  }
+}
+
+
 function drawLineSeries(
   context,
   values,
@@ -909,7 +978,7 @@ function drawLineSeries(
     maximum,
     color,
     lineWidth = 2.5,
-    drawPoints = true
+    drawPoints = false
   } = options;
 
   context.save();
@@ -944,8 +1013,9 @@ function drawLineSeries(
       }
 
       const x =
-        getHourCenterX(
+        getSeriesX(
           index,
+          values.length,
           plot
         );
 
@@ -986,8 +1056,9 @@ function drawLineSeries(
         }
 
         const x =
-          getHourCenterX(
+          getSeriesX(
             index,
+            values.length,
             plot
           );
 
@@ -1018,9 +1089,6 @@ function drawLineSeries(
 }
 
 
-/**
- * Dibuja una línea horizontal de referencia.
- */
 function drawReferenceLine(
   context,
   value,
@@ -1062,7 +1130,7 @@ function drawReferenceLine(
   context.fillStyle =
     color;
 
-  context.lineWidth = 1.5;
+  context.lineWidth = 1.1;
 
   context.setLineDash(
     dash
@@ -1109,13 +1177,20 @@ function drawReferenceLine(
  * LEYENDA
  * ============================================================ */
 
-/**
- * Actualiza la leyenda HTML.
- */
-function renderLegend(items, view = ACSChartsState.currentView) {
+function renderLegend(
+  items,
+  view = ACSChartsState.currentView
+) {
+  const legendId =
+    getLegendIdForView(view);
+
+  if (!legendId) {
+    return;
+  }
+
   const container =
     document.getElementById(
-      getLegendIdForView(view)
+      legendId
     );
 
   if (!container) {
@@ -1145,64 +1220,343 @@ function renderLegend(items, view = ACSChartsState.currentView) {
 
 
 /* ============================================================
- * GRÁFICA DE ENERGÍA
+ * TOOLTIP DEL PERFIL DE DEMANDA
  * ============================================================ */
 
-/**
- * Dibuja consumo, generación y potencia total.
- *
- * Eje izquierdo:
- * - Perfil de consumo en L/h a 60 °C.
- *
- * Eje derecho:
- * - Energía generada en kWh.
- * - Potencia media horaria en kW.
- */
-function drawEnergyChart(
+function getOrCreateDemandTooltip(
+  canvas
+) {
+  const container =
+    canvas.closest(
+      ".chart-container"
+    );
+
+  if (!container) {
+    return null;
+  }
+
+  if (
+    window.getComputedStyle(container)
+      .position === "static"
+  ) {
+    container.style.position =
+      "relative";
+  }
+
+  let tooltip =
+    container.querySelector(
+      ".acs-demand-chart-tooltip"
+    );
+
+  if (!tooltip) {
+    tooltip =
+      document.createElement("div");
+
+    tooltip.className =
+      "acs-demand-chart-tooltip";
+
+    Object.assign(
+      tooltip.style,
+      {
+        position: "absolute",
+        display: "none",
+        pointerEvents: "none",
+        zIndex: "5",
+        padding: "0.55rem 0.7rem",
+        borderRadius: "0.55rem",
+        background:
+          ACS_CHARTS_CONFIG
+            .COLORS
+            .tooltipBackground,
+        color:
+          ACS_CHARTS_CONFIG
+            .COLORS
+            .tooltipText,
+        font:
+          "12px system-ui, sans-serif",
+        lineHeight: "1.4",
+        boxShadow:
+          "0 8px 24px rgba(15, 23, 42, 0.22)",
+        whiteSpace: "nowrap"
+      }
+    );
+
+    container.appendChild(
+      tooltip
+    );
+  }
+
+  return tooltip;
+}
+
+
+function attachDemandTooltip(
+  canvas,
+  plot,
+  demandProfileData
+) {
+  const tooltip =
+    getOrCreateDemandTooltip(
+      canvas
+    );
+
+  if (!tooltip) {
+    return;
+  }
+
+  if (
+    ACSChartsState.demandHoverHandler
+  ) {
+    canvas.removeEventListener(
+      "mousemove",
+      ACSChartsState
+        .demandHoverHandler
+    );
+  }
+
+  if (
+    ACSChartsState.demandLeaveHandler
+  ) {
+    canvas.removeEventListener(
+      "mouseleave",
+      ACSChartsState
+        .demandLeaveHandler
+    );
+  }
+
+  const hoverHandler =
+    event => {
+      const rect =
+        canvas.getBoundingClientRect();
+
+      const x =
+        event.clientX -
+        rect.left;
+
+      const y =
+        event.clientY -
+        rect.top;
+
+      if (
+        x < plot.left ||
+        x > plot.right ||
+        y < plot.top ||
+        y > plot.bottom
+      ) {
+        tooltip.style.display =
+          "none";
+
+        return;
+      }
+
+      const hourIndex =
+        clamp(
+          Math.floor(
+            (
+              x -
+              plot.left
+            ) /
+            plot.width *
+            24
+          ),
+          0,
+          23
+        );
+
+      const liters =
+        demandProfileData
+          .hourlyDemandAt60CL[
+            hourIndex
+          ];
+
+      const energy =
+        demandProfileData
+          .hourlyEnergyEquivalentKWh[
+            hourIndex
+          ];
+
+      const hour =
+        String(hourIndex)
+          .padStart(2, "0");
+
+      tooltip.innerHTML =
+        `
+          <strong>${hour}:00–${String(
+            (hourIndex + 1) % 24
+          ).padStart(2, "0")}:00</strong><br>
+          ${formatNumber(liters, 2)} L<br>
+          ${formatNumber(energy, 2)} kWh
+        `;
+
+      tooltip.style.display =
+        "block";
+
+      const tooltipWidth =
+        tooltip.offsetWidth;
+
+      const left =
+        clamp(
+          x + 14,
+          4,
+          rect.width -
+          tooltipWidth -
+          4
+        );
+
+      const top =
+        Math.max(
+          4,
+          y - 64
+        );
+
+      tooltip.style.left =
+        `${left}px`;
+
+      tooltip.style.top =
+        `${top}px`;
+    };
+
+  const leaveHandler =
+    () => {
+      tooltip.style.display =
+        "none";
+    };
+
+  canvas.addEventListener(
+    "mousemove",
+    hoverHandler
+  );
+
+  canvas.addEventListener(
+    "mouseleave",
+    leaveHandler
+  );
+
+  ACSChartsState
+    .demandHoverHandler =
+    hoverHandler;
+
+  ACSChartsState
+    .demandLeaveHandler =
+    leaveHandler;
+}
+
+
+/* ============================================================
+ * GRÁFICA DEL PERFIL HORARIO DE DEMANDA
+ * ============================================================ */
+
+function normalizeDemandProfileData(
+  input
+) {
+  const source =
+    input &&
+    typeof input === "object"
+      ? input
+      : {};
+
+  const hourlyDemandAt60CL =
+    Array.isArray(
+      source.hourlyDemandAt60CL
+    )
+      ? source
+          .hourlyDemandAt60CL
+          .slice(0, 24)
+          .map(
+            value =>
+              Number(value)
+          )
+      : [];
+
+  if (
+    hourlyDemandAt60CL.length !== 24 ||
+    hourlyDemandAt60CL.some(
+      value =>
+        !Number.isFinite(value) ||
+        value < 0
+    )
+  ) {
+    throw new ACSChartsError(
+      "El perfil horario de demanda debe contener 24 valores válidos en litros."
+    );
+  }
+
+  const referenceTemperatureC =
+    Number.isFinite(
+      Number(
+        source.referenceTemperatureC
+      )
+    )
+      ? Number(
+          source.referenceTemperatureC
+        )
+      : 60;
+
+  const networkTemperatureC =
+    Number.isFinite(
+      Number(
+        source.networkTemperatureC
+      )
+    )
+      ? Number(
+          source.networkTemperatureC
+        )
+      : 10;
+
+  const hourlyEnergyEquivalentKWh =
+    hourlyDemandAt60CL.map(
+      volumeL =>
+        calculateEquivalentEnergyKWh(
+          volumeL,
+          referenceTemperatureC,
+          networkTemperatureC
+        )
+    );
+
+  return {
+    hours:
+      Array.isArray(
+        source.hours
+      ) &&
+      source.hours.length === 24
+        ? source.hours
+        : createDefaultHours(),
+
+    hourlyDemandAt60CL,
+
+    hourlyEnergyEquivalentKWh,
+
+    referenceTemperatureC,
+
+    networkTemperatureC
+  };
+}
+
+
+function drawDemandProfileChart(
   context,
   plot,
-  chartData
+  demandProfileData
 ) {
-  const data =
-    chartData.energy;
-
-  const tankIds =
-    Object.keys(
-      data.generatedEnergyByTank
-    );
-
-  const generatedSeries =
-    tankIds.map(
-      tankId =>
-        data
-          .generatedEnergyByTank[
-            tankId
-          ]
-    );
-
-  const maximumConsumption =
+  const maximumLiters =
     getNiceMaximum(
       getMaximumFromSeries(
         [
-          data
-            .consumptionAt60CL
+          demandProfileData
+            .hourlyDemandAt60CL
         ],
         1
       )
     );
 
   const maximumEnergy =
-    getNiceMaximum(
-      getMaximumFromSeries(
-        [
-          ...generatedSeries,
-
-          data
-            .averageTotalPowerKW
-        ],
-        1
-      )
-    );
+    calculateEquivalentEnergyKWh(
+      maximumLiters,
+      demandProfileData
+        .referenceTemperatureC,
+      demandProfileData
+        .networkTemperatureC
+    ) || 1;
 
   drawVerticalAxis(
     context,
@@ -1210,11 +1564,9 @@ function drawEnergyChart(
     {
       minimum: 0,
       maximum:
-        maximumConsumption,
-
+        maximumLiters,
       label:
-        "Consumo (L/h a 60 °C)",
-
+        "Demanda (L)",
       side:
         "left"
     }
@@ -1227,10 +1579,8 @@ function drawEnergyChart(
       minimum: 0,
       maximum:
         maximumEnergy,
-
       label:
-        "Energía / potencia",
-
+        "Energía equivalente (kWh)",
       side:
         "right"
     }
@@ -1239,174 +1589,89 @@ function drawEnergyChart(
   drawHorizontalAxis(
     context,
     plot,
-    chartData.hours
+    demandProfileData.hours
   );
 
   drawBarSeries(
     context,
-
-    data
-      .consumptionAt60CL,
-
+    demandProfileData
+      .hourlyDemandAt60CL,
     {
       plot,
-
       minimum: 0,
-
       maximum:
-        maximumConsumption,
-
+        maximumLiters,
       color:
         ACS_CHARTS_CONFIG
           .COLORS
           .demand,
-
-      groupIndex: 0,
-
-      groupCount: 1
+      widthFactor: 0.72
     }
   );
-
-  generatedSeries.forEach(
-    (
-      series,
-      index
-    ) => {
-      const hourWidth =
-        plot.width / 24;
-
-      const barWidth =
-        hourWidth *
-        0.2;
-
-      series.forEach(
-        (
-          value,
-          hourIndex
-        ) => {
-          if (!isFiniteNumber(value)) {
-            return;
-          }
-
-          const centerX =
-            getHourCenterX(
-              hourIndex,
-              plot
-            );
-
-          const offset =
-            (
-              index -
-              (
-                generatedSeries.length -
-                1
-              ) /
-              2
-            ) *
-            barWidth;
-
-          const x =
-            centerX +
-            offset -
-            barWidth / 2;
-
-          const y =
-            valueToY(
-              value,
-              0,
-              maximumEnergy,
-              plot
-            );
-
-          context.fillStyle =
-            index === 0
-              ? ACS_CHARTS_CONFIG
-                  .COLORS
-                  .tank1
-              : ACS_CHARTS_CONFIG
-                  .COLORS
-                  .tank2;
-
-          context.fillRect(
-            x,
-            y,
-            barWidth * 0.82,
-            plot.bottom - y
-          );
-        }
-      );
-    }
-  );
-
-  drawLineSeries(
-    context,
-
-    data
-      .averageTotalPowerKW,
-
-    {
-      plot,
-
-      minimum: 0,
-
-      maximum:
-        maximumEnergy,
-
-      color:
-        ACS_CHARTS_CONFIG
-          .COLORS
-          .totalPower,
-
-      lineWidth: 2.3
-    }
-  );
-
-  const legendItems = [
-    {
-      label:
-        "Perfil de consumo",
-
-      color:
-        ACS_CHARTS_CONFIG
-          .COLORS
-          .demand
-    }
-  ];
-
-  tankIds.forEach(
-    (
-      tankId,
-      index
-    ) => {
-      legendItems.push({
-        label:
-          `Energía generada ${tankId}`,
-
-        color:
-          index === 0
-            ? ACS_CHARTS_CONFIG
-                .COLORS
-                .tank1
-            : ACS_CHARTS_CONFIG
-                .COLORS
-                .tank2
-      });
-    }
-  );
-
-  legendItems.push({
-    label:
-      "Potencia total media",
-
-    color:
-      ACS_CHARTS_CONFIG
-        .COLORS
-        .totalPower
-  });
 
   renderLegend(
-    legendItems
+    [
+      {
+        label:
+          "Demanda horaria a 60 °C",
+        color:
+          ACS_CHARTS_CONFIG
+            .COLORS
+            .demand
+      }
+    ],
+    "demand"
   );
+}
+
+
+function renderDemandProfile(
+  input
+) {
+  const demandProfileData =
+    normalizeDemandProfileData(
+      input
+    );
+
+  ACSChartsState
+    .demandProfileData =
+    demandProfileData;
+
+  const {
+    canvas,
+    context,
+    width,
+    height
+  } =
+    prepareCanvas(
+      "demand"
+    );
+
+  clearCanvas(
+    context,
+    width,
+    height
+  );
+
+  const plot =
+    getPlotArea(
+      width,
+      height
+    );
+
+  drawDemandProfileChart(
+    context,
+    plot,
+    demandProfileData
+  );
+
+  attachDemandTooltip(
+    canvas,
+    plot,
+    demandProfileData
+  );
+
+  return demandProfileData;
 }
 
 
@@ -1414,9 +1679,6 @@ function drawEnergyChart(
  * GRÁFICA DE CARGA
  * ============================================================ */
 
-/**
- * Dibuja la carga final horaria de cada depósito.
- */
 function drawLoadChart(
   context,
   plot,
@@ -1425,9 +1687,14 @@ function drawLoadChart(
   const data =
     chartData.load;
 
+  const loadSeriesByTank =
+    data.continuousLoadByTank ||
+    data.finalLoadByTank ||
+    {};
+
   const tankIds =
     Object.keys(
-      data.finalLoadByTank
+      loadSeriesByTank
     );
 
   drawVerticalAxis(
@@ -1436,13 +1703,10 @@ function drawLoadChart(
     {
       minimum: 0,
       maximum: 100,
-
       label:
-        "Carga final (%)",
-
+        "Carga (%)",
       side:
         "left",
-
       formatter:
         value =>
           `${formatNumber(
@@ -1465,18 +1729,13 @@ function drawLoadChart(
     ) => {
       drawLineSeries(
         context,
-
-        data
-          .finalLoadByTank[
-            tankId
-          ],
-
+        loadSeriesByTank[
+          tankId
+        ],
         {
           plot,
-
           minimum: 0,
           maximum: 100,
-
           color:
             index === 0
               ? ACS_CHARTS_CONFIG
@@ -1484,7 +1743,8 @@ function drawLoadChart(
                   .tank1
               : ACS_CHARTS_CONFIG
                   .COLORS
-                  .tank2
+                  .tank2,
+          drawPoints: false
         }
       );
     }
@@ -1492,21 +1752,15 @@ function drawLoadChart(
 
   drawReferenceLine(
     context,
-
-    data
-      .tightReferencePercent,
-
+    data.tightReferencePercent,
     {
       plot,
-
       minimum: 0,
       maximum: 100,
-
       color:
         ACS_CHARTS_CONFIG
           .COLORS
           .comfortTightReference,
-
       label:
         "Cubre justo · 30 %"
     }
@@ -1514,21 +1768,15 @@ function drawLoadChart(
 
   drawReferenceLine(
     context,
-
-    data
-      .comfortableReferencePercent,
-
+    data.comfortableReferencePercent,
     {
       plot,
-
       minimum: 0,
       maximum: 100,
-
       color:
         ACS_CHARTS_CONFIG
           .COLORS
           .comfortComfortableReference,
-
       label:
         "Cumple holgado · 60 %"
     }
@@ -1541,8 +1789,7 @@ function drawLoadChart(
         index
       ) => ({
         label:
-          `Carga final ${tankId}`,
-
+          `Carga continua ${tankId}`,
         color:
           index === 0
             ? ACS_CHARTS_CONFIG
@@ -1558,17 +1805,14 @@ function drawLoadChart(
     {
       label:
         "Referencia 30 %",
-
       color:
         ACS_CHARTS_CONFIG
           .COLORS
           .comfortTightReference
     },
-
     {
       label:
         "Referencia 60 %",
-
       color:
         ACS_CHARTS_CONFIG
           .COLORS
@@ -1577,7 +1821,656 @@ function drawLoadChart(
   );
 
   renderLegend(
-    legendItems
+    legendItems,
+    "load"
+  );
+}
+
+
+/* ============================================================
+ * GRÁFICA DE ENERGÍA HORARIA
+ * ============================================================ */
+
+function drawHourlyEnergyChart(
+  context,
+  plot,
+  chartData
+) {
+  const data =
+    chartData.energy;
+
+  const deliveredEnergyByTank =
+    data.deliveredEnergyByTank ||
+    {};
+
+  const tankIds =
+    Object.keys(
+      deliveredEnergyByTank
+    );
+
+  const energySeries =
+    tankIds.map(
+      tankId =>
+        deliveredEnergyByTank[
+          tankId
+        ]
+    );
+
+  const stackedTotals =
+    Array.from(
+      { length: 24 },
+      (
+        _value,
+        hourIndex
+      ) =>
+        energySeries.reduce(
+          (
+            sum,
+            series
+          ) =>
+            sum +
+            finiteOrFallbackForChart(
+              series[hourIndex],
+              0
+            ),
+          0
+        )
+    );
+
+  const maximumEnergy =
+    getNiceMaximum(
+      getMaximumFromSeries(
+        [
+          stackedTotals,
+          data.totalDeliveredEnergyKWh
+        ],
+        1
+      )
+    );
+
+  drawVerticalAxis(
+    context,
+    plot,
+    {
+      minimum: 0,
+      maximum:
+        maximumEnergy,
+      label:
+        "Energía entregada (kWh)",
+      side:
+        "left"
+    }
+  );
+
+  drawHorizontalAxis(
+    context,
+    plot,
+    chartData.hours
+  );
+
+  drawStackedBarSeries(
+    context,
+    energySeries,
+    {
+      plot,
+      maximum:
+        maximumEnergy,
+      colors:
+        tankIds.map(
+          (
+            _tankId,
+            index
+          ) =>
+            index === 0
+              ? ACS_CHARTS_CONFIG
+                  .COLORS
+                  .tank1Energy
+              : ACS_CHARTS_CONFIG
+                  .COLORS
+                  .tank2Energy
+        )
+    }
+  );
+
+  renderLegend(
+    tankIds.map(
+      (
+        tankId,
+        index
+      ) => ({
+        label:
+          `Energía entregada ${tankId}`,
+        color:
+          index === 0
+            ? ACS_CHARTS_CONFIG
+                .COLORS
+                .tank1Energy
+            : ACS_CHARTS_CONFIG
+                .COLORS
+                .tank2Energy
+      })
+    ),
+    "hourlyEnergy"
+  );
+}
+
+
+/* ============================================================
+ * CRONOGRAMA DE FUNCIONAMIENTO Y POTENCIA
+ * ============================================================ */
+
+/**
+ * Convierte una serie de potencia minuto a minuto en intervalos
+ * continuos de funcionamiento.
+ */
+function buildRunningIntervals(
+  values,
+  threshold = 0.001
+) {
+  if (
+    !Array.isArray(values) ||
+    values.length === 0
+  ) {
+    return [];
+  }
+
+  const intervals = [];
+  let startIndex = null;
+
+  values.forEach(
+    (
+      value,
+      index
+    ) => {
+      const isRunning =
+        isFiniteNumber(value) &&
+        value > threshold;
+
+      if (
+        isRunning &&
+        startIndex === null
+      ) {
+        startIndex = index;
+      }
+
+      const isLastPoint =
+        index === values.length - 1;
+
+      if (
+        startIndex !== null &&
+        (
+          !isRunning ||
+          isLastPoint
+        )
+      ) {
+        const endIndex =
+          isRunning &&
+          isLastPoint
+            ? index + 1
+            : index;
+
+        intervals.push({
+          startIndex,
+          endIndex
+        });
+
+        startIndex = null;
+      }
+    }
+  );
+
+  return intervals;
+}
+
+
+/**
+ * Dibuja el eje temporal específico del cronograma.
+ */
+function drawLaneTimeAxis(
+  context,
+  plot
+) {
+  context.save();
+
+  context.strokeStyle =
+    ACS_CHARTS_CONFIG
+      .COLORS
+      .axis;
+
+  context.fillStyle =
+    ACS_CHARTS_CONFIG
+      .COLORS
+      .axis;
+
+  context.lineWidth = 1;
+  context.font =
+    "11px system-ui, sans-serif";
+
+  context.textAlign =
+    "center";
+
+  context.textBaseline =
+    "top";
+
+  context.beginPath();
+
+  context.moveTo(
+    plot.left,
+    plot.bottom
+  );
+
+  context.lineTo(
+    plot.right,
+    plot.bottom
+  );
+
+  context.stroke();
+
+  for (
+    let hour = 0;
+    hour <= 24;
+    hour += 2
+  ) {
+    const x =
+      plot.left +
+      plot.width *
+      hour / 24;
+
+    context.strokeStyle =
+      ACS_CHARTS_CONFIG
+        .COLORS
+        .grid;
+
+    context.beginPath();
+
+    context.moveTo(
+      x,
+      plot.top
+    );
+
+    context.lineTo(
+      x,
+      plot.bottom
+    );
+
+    context.stroke();
+
+    context.fillStyle =
+      ACS_CHARTS_CONFIG
+        .COLORS
+        .axis;
+
+    context.fillText(
+      `${String(hour).padStart(2, "0")}:00`,
+      x,
+      plot.bottom + 12
+    );
+  }
+
+  context.fillStyle =
+    ACS_CHARTS_CONFIG
+      .COLORS
+      .text;
+
+  context.font =
+    "600 12px system-ui, sans-serif";
+
+  context.fillText(
+    "Hora",
+    (
+      plot.left +
+      plot.right
+    ) / 2,
+    plot.bottom + 38
+  );
+
+  context.restore();
+}
+
+
+/**
+ * Dibuja un carril operativo sin solaparse con los demás.
+ */
+function drawOperatingLane(
+  context,
+  lane,
+  plot,
+  seriesLength
+) {
+  const laneHeight = 46;
+  const barHeight = 20;
+  const laneTop =
+    lane.centerY -
+    laneHeight / 2;
+
+  context.save();
+
+  context.fillStyle =
+    lane.background;
+
+  context.strokeStyle =
+    ACS_CHARTS_CONFIG
+      .COLORS
+      .grid;
+
+  context.lineWidth = 1;
+
+  context.fillRect(
+    plot.left,
+    laneTop,
+    plot.width,
+    laneHeight
+  );
+
+  context.strokeRect(
+    plot.left,
+    laneTop,
+    plot.width,
+    laneHeight
+  );
+
+  context.fillStyle =
+    ACS_CHARTS_CONFIG
+      .COLORS
+      .text;
+
+  context.font =
+    "600 12px system-ui, sans-serif";
+
+  context.textAlign =
+    "right";
+
+  context.textBaseline =
+    "middle";
+
+  context.fillText(
+    lane.label,
+    plot.left - 14,
+    lane.centerY - 7
+  );
+
+  context.fillStyle =
+    ACS_CHARTS_CONFIG
+      .COLORS
+      .axis;
+
+  context.font =
+    "11px system-ui, sans-serif";
+
+  context.fillText(
+    `${formatNumber(
+      lane.maximumPowerKW,
+      1
+    )} kW`,
+    plot.left - 14,
+    lane.centerY + 10
+  );
+
+  const intervals =
+    buildRunningIntervals(
+      lane.values
+    );
+
+  intervals.forEach(
+    interval => {
+      const xStart =
+        plot.left +
+        plot.width *
+        interval.startIndex /
+        seriesLength;
+
+      const xEnd =
+        plot.left +
+        plot.width *
+        interval.endIndex /
+        seriesLength;
+
+      const width =
+        Math.max(
+          1,
+          xEnd - xStart
+        );
+
+      context.fillStyle =
+        lane.color;
+
+      context.fillRect(
+        xStart,
+        lane.centerY -
+          barHeight / 2,
+        width,
+        barHeight
+      );
+
+      /*
+       * Marca vertical de arranque al principio de cada ciclo.
+       */
+      context.fillStyle =
+        ACS_CHARTS_CONFIG
+          .COLORS
+          .text;
+
+      context.fillRect(
+        xStart,
+        lane.centerY -
+          barHeight / 2 -
+          4,
+        1.5,
+        barHeight + 8
+      );
+    }
+  );
+
+  context.restore();
+}
+
+
+function drawPowerChart(
+  context,
+  plot,
+  chartData
+) {
+  const data =
+    chartData.energy;
+
+  const exchangerPowerByTankKW =
+    data.exchangerPowerByTankKW ||
+    {};
+
+  const maximumPowerByTank =
+    data
+      .exchangerMaximumPowerByTankKW ||
+    {};
+
+  const tankIds =
+    Object.keys(
+      exchangerPowerByTankKW
+    );
+
+  const generatorSeries =
+    Array.isArray(
+      data.generatorPowerKW
+    )
+      ? data.generatorPowerKW
+      : [];
+
+  const allSeriesLengths = [
+    generatorSeries.length,
+    ...tankIds.map(
+      tankId =>
+        Array.isArray(
+          exchangerPowerByTankKW[
+            tankId
+          ]
+        )
+          ? exchangerPowerByTankKW[
+              tankId
+            ].length
+          : 0
+    )
+  ].filter(
+    length =>
+      length > 0
+  );
+
+  const seriesLength =
+    allSeriesLengths.length > 0
+      ? Math.max(
+          ...allSeriesLengths
+        )
+      : 1440;
+
+  /*
+   * Se reserva espacio a la izquierda para los nombres y potencias.
+   */
+  const lanePlot = {
+    left:
+      plot.left + 145,
+
+    right:
+      plot.right,
+
+    top:
+      plot.top + 8,
+
+    bottom:
+      plot.bottom - 8,
+
+    width:
+      plot.width - 145,
+
+    height:
+      plot.height - 16
+  };
+
+  const laneCount =
+    1 + tankIds.length;
+
+  const laneSpacing =
+    lanePlot.height /
+    Math.max(
+      1,
+      laneCount
+    );
+
+  const lanes = [
+    {
+      label:
+        "Generador",
+
+      values:
+        generatorSeries,
+
+      maximumPowerKW:
+        finiteOrFallbackForChart(
+          data.generatorMaximumPowerKW,
+          getMaximumFromSeries(
+            [generatorSeries],
+            0
+          )
+        ),
+
+      color:
+        ACS_CHARTS_CONFIG
+          .COLORS
+          .generatorPower,
+
+      background:
+        "rgba(220, 38, 38, 0.06)"
+    },
+
+    ...tankIds.map(
+      (
+        tankId,
+        index
+      ) => ({
+        label:
+          `Intercambiador ${tankId}`,
+
+        values:
+          Array.isArray(
+            exchangerPowerByTankKW[
+              tankId
+            ]
+          )
+            ? exchangerPowerByTankKW[
+                tankId
+              ]
+            : [],
+
+        maximumPowerKW:
+          finiteOrFallbackForChart(
+            maximumPowerByTank[
+              tankId
+            ],
+            getMaximumFromSeries(
+              [
+                exchangerPowerByTankKW[
+                  tankId
+                ] || []
+              ],
+              0
+            )
+          ),
+
+        color:
+          index === 0
+            ? ACS_CHARTS_CONFIG
+                .COLORS
+                .exchanger1Power
+            : ACS_CHARTS_CONFIG
+                .COLORS
+                .exchanger2Power,
+
+        background:
+          index === 0
+            ? "rgba(29, 78, 216, 0.06)"
+            : "rgba(21, 128, 61, 0.06)"
+      })
+    )
+  ];
+
+  drawLaneTimeAxis(
+    context,
+    lanePlot
+  );
+
+  lanes.forEach(
+    (
+      lane,
+      index
+    ) => {
+      drawOperatingLane(
+        context,
+        {
+          ...lane,
+
+          centerY:
+            lanePlot.top +
+            laneSpacing *
+            (
+              index + 0.5
+            )
+        },
+        lanePlot,
+        seriesLength
+      );
+    }
+  );
+
+  renderLegend(
+    lanes.map(
+      lane => ({
+        label:
+          `${lane.label} · ${formatNumber(
+            lane.maximumPowerKW,
+            1
+          )} kW`,
+        color:
+          lane.color
+      })
+    ),
+    "power"
   );
 }
 
@@ -1586,15 +2479,12 @@ function drawLoadChart(
  * MENSAJE SIN DATOS
  * ============================================================ */
 
-/**
- * Dibuja un mensaje cuando no hay datos.
- */
 function drawEmptyChart(
   context,
   width,
   height,
-  message =
-    "No hay datos disponibles."
+  message,
+  view
 ) {
   clearCanvas(
     context,
@@ -1617,22 +2507,23 @@ function drawEmptyChart(
     "middle";
 
   context.fillText(
-    message,
+    message ||
+    "No hay datos disponibles.",
     width / 2,
     height / 2
   );
 
-  renderLegend([]);
+  renderLegend(
+    [],
+    view
+  );
 }
 
 
 /* ============================================================
- * RENDERIZADO PRINCIPAL
+ * VALIDACIÓN DE DATOS
  * ============================================================ */
 
-/**
- * Comprueba la estructura de los datos.
- */
 function validateChartData(
   chartData
 ) {
@@ -1652,7 +2543,7 @@ function validateChartData(
     chartData.hours.length !== 24
   ) {
     throw new ACSChartsError(
-      "La gráfica necesita 24 horas de resultados.",
+      "Las gráficas necesitan 24 horas de resultados.",
       {
         receivedHours:
           chartData.hours
@@ -1661,13 +2552,34 @@ function validateChartData(
     );
   }
 
+  if (
+    !chartData.energy ||
+    typeof chartData.energy !==
+      "object"
+  ) {
+    throw new ACSChartsError(
+      "No se han recibido los datos de energía y potencia."
+    );
+  }
+
+  if (
+    !chartData.load ||
+    typeof chartData.load !==
+      "object"
+  ) {
+    throw new ACSChartsError(
+      "No se han recibido los datos de carga."
+    );
+  }
+
   return true;
 }
 
 
-/**
- * Dibuja una de las dos gráficas disponibles.
- */
+/* ============================================================
+ * RENDERIZADO PRINCIPAL
+ * ============================================================ */
+
 function render(
   view,
   chartData
@@ -1677,8 +2589,9 @@ function render(
   );
 
   const allowedViews = [
-    "energy",
-    "load"
+    "load",
+    "hourlyEnergy",
+    "power"
   ];
 
   if (
@@ -1714,8 +2627,8 @@ function render(
       height
     );
 
-  if (view === "energy") {
-    drawEnergyChart(
+  if (view === "load") {
+    drawLoadChart(
       context,
       plot,
       chartData
@@ -1724,7 +2637,19 @@ function render(
     return;
   }
 
-  drawLoadChart(
+  if (
+    view === "hourlyEnergy"
+  ) {
+    drawHourlyEnergyChart(
+      context,
+      plot,
+      chartData
+    );
+
+    return;
+  }
+
+  drawPowerChart(
     context,
     plot,
     chartData
@@ -1732,10 +2657,9 @@ function render(
 }
 
 
-/**
- * Dibuja simultáneamente las dos gráficas disponibles.
- */
-function renderAll(chartData) {
+function renderAll(
+  chartData
+) {
   validateChartData(
     chartData
   );
@@ -1744,8 +2668,9 @@ function renderAll(chartData) {
     chartData;
 
   [
-    "energy",
-    "load"
+    "load",
+    "hourlyEnergy",
+    "power"
   ].forEach(
     view => {
       render(
@@ -1756,36 +2681,65 @@ function renderAll(chartData) {
   );
 
   ACSChartsState.currentView =
-    "energy";
+    "load";
 }
 
 
-/**
- * Redibuja la gráfica actual.
- */
 function redraw() {
   if (
-    !ACSChartsState.chartData
+    ACSChartsState
+      .demandProfileData
   ) {
-    return;
+    try {
+      renderDemandProfile(
+        ACSChartsState
+          .demandProfileData
+      );
+    } catch (error) {
+      console.error(error);
+    }
   }
 
-  renderAll(
+  if (
     ACSChartsState.chartData
-  );
+  ) {
+    renderAll(
+      ACSChartsState.chartData
+    );
+  }
 }
 
 
-/**
- * Limpia la gráfica.
- */
-function clear() {
-  const views = [
-    "energy",
-    "load"
-  ];
+function clearDemandProfile() {
+  try {
+    const {
+      context,
+      width,
+      height
+    } =
+      prepareCanvas(
+        "demand"
+      );
 
-  views.forEach(
+    drawEmptyChart(
+      context,
+      width,
+      height,
+      "Completa los datos de demanda para mostrar el perfil horario.",
+      "demand"
+    );
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+
+function clearResults() {
+  [
+    "load",
+    "hourlyEnergy",
+    "power"
+  ].forEach(
     view => {
       try {
         const {
@@ -1795,14 +2749,12 @@ function clear() {
         } =
           prepareCanvas(view);
 
-        ACSChartsState.currentView =
-          view;
-
         drawEmptyChart(
           context,
           width,
           height,
-          "Ejecuta la simulación para mostrar esta gráfica."
+          "Ejecuta la simulación para mostrar esta gráfica.",
+          view
         );
       } catch (error) {
         console.error(error);
@@ -1811,7 +2763,13 @@ function clear() {
   );
 
   ACSChartsState.currentView =
-    "energy";
+    "load";
+}
+
+
+function clear() {
+  clearDemandProfile();
+  clearResults();
 }
 
 
@@ -1819,9 +2777,6 @@ function clear() {
  * REDIMENSIONADO
  * ============================================================ */
 
-/**
- * Redibuja evitando llamadas excesivas durante el resize.
- */
 function handleResize() {
   if (
     ACSChartsState.resizeFrame
@@ -1847,11 +2802,6 @@ function handleResize() {
  * EXPORTACIÓN DE IMAGEN
  * ============================================================ */
 
-/**
- * Devuelve la gráfica actual como imagen PNG.
- *
- * Será utilizada posteriormente por report.js.
- */
 function getCurrentChartImage(
   view = ACSChartsState.currentView
 ) {
@@ -1871,15 +2821,32 @@ function getCurrentChartImage(
 }
 
 
-/**
- * Dibuja temporalmente una vista y devuelve su imagen.
- *
- * Permite incluir las gráficas disponibles en el informe.
- */
 function getChartImage(
   view,
-  chartData
+  chartData = null
 ) {
+  if (view === "demand") {
+    if (chartData) {
+      renderDemandProfile(
+        chartData
+      );
+    } else if (
+      ACSChartsState
+        .demandProfileData
+    ) {
+      renderDemandProfile(
+        ACSChartsState
+          .demandProfileData
+      );
+    } else {
+      return null;
+    }
+
+    return getCurrentChartImage(
+      "demand"
+    );
+  }
+
   render(
     view,
     chartData
@@ -1904,13 +2871,21 @@ const ACSCharts =
 
     renderAll,
 
+    renderDemandProfile,
+
     redraw,
 
     clear,
 
+    clearDemandProfile,
+
+    clearResults,
+
     getCurrentChartImage,
 
-    getChartImage
+    getChartImage,
+
+    calculateEquivalentEnergyKWh
   });
 
 

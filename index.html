@@ -169,6 +169,25 @@
       gap: 1.5rem;
     }
 
+    .demand-profile-chart-panel {
+      margin-top: 0.25rem;
+    }
+
+    .demand-profile-chart-panel .chart-container {
+      min-height: 320px;
+      overflow-x: auto;
+    }
+
+    .demand-profile-chart-panel canvas {
+      width: 100% !important;
+      min-width: 720px;
+      height: 300px !important;
+    }
+
+    .generated-demand-profile-source {
+      display: none !important;
+    }
+
     .chart-panel {
       display: grid;
       gap: 0.9rem;
@@ -765,20 +784,38 @@
               </div>
 
               <div class="form-field form-field--full">
-                <label for="generatedDemandProfile">
-                  Perfil horario generado
-                </label>
+                <article class="chart-panel demand-profile-chart-panel">
+                  <div class="chart-panel__header">
+                    <h4>Perfil horario de demanda</h4>
+
+                    <p>
+                      Demanda horaria de ACS. Las barras representan litros
+                      a 60 °C; el eje derecho muestra su energía equivalente.
+                    </p>
+                  </div>
+
+                  <div class="chart-container">
+                    <canvas
+                      id="demandProfileChart"
+                      aria-label="Perfil horario de demanda en litros y energía equivalente"
+                    ></canvas>
+                  </div>
+
+                  <div
+                    id="demandProfileChartLegend"
+                    class="chart-legend"
+                  ></div>
+                </article>
 
                 <textarea
                   id="generatedDemandProfile"
                   name="generatedDemandProfile"
                   rows="4"
+                  class="generated-demand-profile-source"
                   readonly
+                  aria-hidden="true"
+                  tabindex="-1"
                 ></textarea>
-
-                <small class="form-field__help">
-                  Valores horarios en litros a 60 °C.
-                </small>
               </div>
 
             </div>
@@ -1588,7 +1625,7 @@
 
               <tbody id="tankResultsTableBody">
                 <tr>
-                  <td colspan="8">
+                  <td colspan="9">
                     Sin resultados disponibles.
                   </td>
                 </tr>
@@ -1671,9 +1708,8 @@
               <h3>Evolución durante las últimas 24 horas</h3>
 
               <p>
-                Las dos gráficas y la tabla horaria se muestran
-                simultáneamente para facilitar la lectura del
-                comportamiento energético de la instalación.
+                Evolución de la carga, la energía entregada y la potencia
+                instantánea durante el periodo analizado.
               </p>
             </div>
           </div>
@@ -1682,23 +1718,71 @@
 
             <article class="chart-panel">
               <div class="chart-panel__header">
-                <h4>Consumo y generación</h4>
+                <h4>Carga de los depósitos (%)</h4>
 
                 <p>
-                  Perfil horario de consumo, energía generada
-                  y potencia media total.
+                  Porcentaje de carga, calculado como energía almacenada
+                  respecto a la capacidad máxima de cada depósito.
                 </p>
               </div>
 
               <div class="chart-container">
                 <canvas
-                  id="resultsChartEnergy"
-                  aria-label="Gráfica de consumo y generación"
+                  id="resultsChartLoad"
+                  aria-label="Gráfica de carga de los depósitos"
                 ></canvas>
               </div>
 
               <div
-                id="chartLegendEnergy"
+                id="chartLegendLoad"
+                class="chart-legend"
+              ></div>
+            </article>
+
+
+            <article class="chart-panel">
+              <div class="chart-panel__header">
+                <h4>Energía entregada por hora (kWh)</h4>
+
+                <p>
+                  Energía útil entregada por los generadores
+                  e intercambiadores durante cada hora.
+                </p>
+              </div>
+
+              <div class="chart-container">
+                <canvas
+                  id="resultsChartHourlyEnergy"
+                  aria-label="Gráfica de energía entregada por hora"
+                ></canvas>
+              </div>
+
+              <div
+                id="chartLegendHourlyEnergy"
+                class="chart-legend"
+              ></div>
+            </article>
+
+
+            <article class="chart-panel">
+              <div class="chart-panel__header">
+                <h4>Potencia instantánea (kW)</h4>
+
+                <p>
+                  Potencia instantánea del generador y de los
+                  intercambiadores durante las últimas 24 horas.
+                </p>
+              </div>
+
+              <div class="chart-container">
+                <canvas
+                  id="resultsChartPower"
+                  aria-label="Gráfica de potencia instantánea"
+                ></canvas>
+              </div>
+
+              <div
+                id="chartLegendPower"
                 class="chart-legend"
               ></div>
             </article>
@@ -1726,42 +1810,19 @@
                       <th>Arranques</th>
                       <th>Primer arranque</th>
                       <th>Tiempo de funcionamiento</th>
+                      <th>Tiempo medio por arranque</th>
                     </tr>
                   </thead>
 
                   <tbody id="operatingSummaryTableBody">
                     <tr>
-                      <td colspan="8">
+                      <td colspan="9">
                         Sin resultados disponibles.
                       </td>
                     </tr>
                   </tbody>
                 </table>
               </div>
-            </article>
-
-
-            <article class="chart-panel">
-              <div class="chart-panel__header">
-                <h4>Carga de depósitos</h4>
-
-                <p>
-                  Evolución de la carga final horaria
-                  de cada acumulador.
-                </p>
-              </div>
-
-              <div class="chart-container">
-                <canvas
-                  id="resultsChartLoad"
-                  aria-label="Gráfica de carga de los depósitos"
-                ></canvas>
-              </div>
-
-              <div
-                id="chartLegendLoad"
-                class="chart-legend"
-              ></div>
             </article>
 
           </div>

@@ -34,15 +34,18 @@ const ACSAppState = {
 
   analysisResult: null,
 
+  demandProfilePreview: null,
+
   hasCalculated: false,
 
-  currentChartView: "energy"
+  currentChartView: "load"
 };
 
 
 const ALLOWED_CHART_VIEWS = Object.freeze([
-  "energy",
-  "load"
+  "load",
+  "hourlyEnergy",
+  "power"
 ]);
 
 
@@ -471,6 +474,19 @@ function showScreen(screenName) {
     window.requestAnimationFrame(
       () => {
         renderActiveChart();
+      }
+    );
+  }
+
+  if (
+    screenName === "inputs" &&
+    ACSAppState.demandProfilePreview
+  ) {
+    window.requestAnimationFrame(
+      () => {
+        renderDemandProfileChart(
+          ACSAppState.demandProfilePreview
+        );
       }
     );
   }
@@ -1348,6 +1364,49 @@ function updateDemandPreview() {
         "aria-invalid"
       );
 
+    const previewData = {
+      hours:
+        Array.from(
+          { length: 24 },
+          (
+            _value,
+            hourIndex
+          ) => ({
+            hourIndex,
+            label:
+              `${String(
+                hourIndex
+              ).padStart(
+                2,
+                "0"
+              )}:00`
+          })
+        ),
+
+      hourlyDemandAt60CL:
+        generatedProfile
+          .hourlyDemandAt60CL
+          .map(Number),
+
+      referenceTemperatureC:
+        60,
+
+      networkTemperatureC:
+        Number(
+          getElement(
+            "networkTemperatureC"
+          ).value
+        )
+    };
+
+    ACSAppState
+      .demandProfilePreview =
+      previewData;
+
+    renderDemandProfileChart(
+      previewData
+    );
+
     return generatedProfile;
 
   } catch (error) {
@@ -1364,7 +1423,57 @@ function updateDemandPreview() {
         "true"
       );
 
+    ACSAppState
+      .demandProfilePreview =
+      null;
+
+    if (
+      window.ACSCharts &&
+      typeof window
+        .ACSCharts
+        .clearDemandProfile ===
+        "function"
+    ) {
+      window
+        .ACSCharts
+        .clearDemandProfile();
+    }
+
     return null;
+  }
+}
+
+
+/**
+ * Dibuja la vista previa del perfil horario de demanda.
+ */
+function renderDemandProfileChart(
+  previewData =
+    ACSAppState
+      .demandProfilePreview
+) {
+  if (
+    !previewData ||
+    !window.ACSCharts ||
+    typeof window
+      .ACSCharts
+      .renderDemandProfile !==
+      "function"
+  ) {
+    return;
+  }
+
+  try {
+    window
+      .ACSCharts
+      .renderDemandProfile(
+        previewData
+      );
+  } catch (error) {
+    console.error(
+      "No se ha podido dibujar el perfil horario de demanda.",
+      error
+    );
   }
 }
 
@@ -1927,7 +2036,7 @@ function clearRenderedResults() {
     .innerHTML =
     `
       <tr>
-        <td colspan="8">
+        <td colspan="9">
           Sin resultados disponibles.
         </td>
       </tr>
@@ -2003,7 +2112,7 @@ function renderOperatingSummary(
       .innerHTML =
       `
         <tr>
-          <td colspan="8">
+          <td colspan="9">
             Sin resultados horarios disponibles.
           </td>
         </tr>
@@ -2102,6 +2211,13 @@ function renderOperatingSummary(
                       )
                 );
 
+          const averageMinutesPerStart =
+            Number.isFinite(starts) &&
+            starts > 0 &&
+            Number.isFinite(runningMinutes)
+              ? runningMinutes / starts
+              : null;
+
           const firstStart =
             minuteResults.find(
               minute =>
@@ -2184,6 +2300,14 @@ function renderOperatingSummary(
                   runningMinutes === null
                     ? "—"
                     : `${formatNumber(runningMinutes, 0)} min`
+                }
+              </td>
+
+              <td>
+                ${
+                  averageMinutesPerStart === null
+                    ? "—"
+                    : `${formatNumber(averageMinutesPerStart, 1)} min/arranque`
                 }
               </td>
             </tr>
@@ -2502,7 +2626,7 @@ function handleSimulationSubmit(
       true;
 
     ACSAppState.currentChartView =
-      "energy";
+      "load";
 
     DOM.stepResultsButton.disabled =
       false;
@@ -2642,11 +2766,14 @@ function createNewProject() {
   ACSAppState.analysisResult =
     null;
 
+  ACSAppState.demandProfilePreview =
+    null;
+
   ACSAppState.hasCalculated =
     false;
 
   ACSAppState.currentChartView =
-    "energy";
+    "load";
 
   DOM.stepResultsButton.disabled =
     true;
@@ -2770,7 +2897,11 @@ function requestGeneratePdf() {
 
         analysis:
           ACSAppState
-            .analysisResult
+            .analysisResult,
+
+        demandProfile:
+          ACSAppState
+            .demandProfilePreview
       });
 
     return;
@@ -2798,6 +2929,10 @@ function getSerializableAppState() {
       ACSAppState.inputConfig ||
       null,
 
+    demandProfilePreview:
+      ACSAppState.demandProfilePreview ||
+      null,
+
     calculated:
       ACSAppState.hasCalculated,
 
@@ -2812,7 +2947,7 @@ function getSerializableAppState() {
  * ============================================================ */
 
 /**
- * Dibuja simultáneamente las dos gráficas de resultados.
+ * Dibuja simultáneamente las tres gráficas de resultados.
  */
 function renderAllCharts() {
   const chartData =
@@ -2954,6 +3089,13 @@ function registerEventListeners() {
       updateDemandPreview
     );
 
+  getElement(
+    "networkTemperatureC"
+  ).addEventListener(
+    "input",
+    updateDemandPreview
+  );
+
   DOM.customDemandProfile
     .addEventListener(
       "input",
@@ -3087,7 +3229,7 @@ function initializeApplication() {
   clearRenderedResults();
 
   ACSAppState.currentChartView =
-    "energy";
+    "load";
 
   setCalculationStatus(
     "Sin calcular"
@@ -3126,6 +3268,14 @@ function initializeApplication() {
         .intrahourDemandProfileType
         .value;
     },
+
+    getDemandProfilePreview() {
+      return ACSAppState
+        .demandProfilePreview;
+    },
+
+    renderDemandProfile:
+      renderDemandProfileChart,
 
     formatNumber
   });

@@ -2158,6 +2158,9 @@ function createChartData(
   const hourly =
     context.hourly;
 
+  const minutes =
+    context.minutes;
+
   const tankCount =
     context.config.tankCount;
 
@@ -2183,24 +2186,12 @@ function createChartData(
       })
     );
 
-  const consumptionAt60CL =
-    hourly.map(
-      hour =>
-        context
-          .config
-          .hourlyDemandAt60CL[
-            hour.hourIndex
-          ]
-    );
-
-  const generatedEnergyByTank =
-    {};
-
-  const averageTemperatureByTank =
-    {};
-
-  const finalLoadByTank =
-    {};
+  const deliveredEnergyByTank = {};
+  const exchangerPowerByTankKW = {};
+  const exchangerMaximumPowerByTankKW = {};
+  const averageTemperatureByTank = {};
+  const finalLoadByTank = {};
+  const continuousLoadByTank = {};
 
   for (
     let tankIndex = 0;
@@ -2210,7 +2201,7 @@ function createChartData(
     const tankId =
       `D${tankIndex + 1}`;
 
-    generatedEnergyByTank[
+    deliveredEnergyByTank[
       tankId
     ] =
       hourly.map(
@@ -2218,6 +2209,31 @@ function createChartData(
           hour
             .tanks[tankIndex]
             .generatedEnergyKWh
+      );
+
+    exchangerPowerByTankKW[
+      tankId
+    ] =
+      minutes.map(
+        minute =>
+          finiteOrFallback(
+            minute
+              .generation
+              .tankResults[tankIndex]
+              ?.effectivePowerKW,
+            0
+          )
+      );
+
+    exchangerMaximumPowerByTankKW[
+      tankId
+    ] =
+      finiteOrFallback(
+        context
+          .config
+          .tanks[tankIndex]
+          .exchangerPowerKW,
+        0
       );
 
     averageTemperatureByTank[
@@ -2239,54 +2255,81 @@ function createChartData(
             .tanks[tankIndex]
             .finalLoadPercent
       );
+
+    continuousLoadByTank[
+      tankId
+    ] =
+      minutes.map(
+        minute =>
+          finiteOrFallback(
+            minute
+              .finalTankStates[tankIndex]
+              ?.loadPercent,
+            0
+          )
+      );
   }
 
-  const totalGeneratedEnergyKWh =
-    hourly.map(
-      hour =>
-        hour
-          .energy
-          .generatedEnergyKWh
+  const generatorPowerKW =
+    minutes.map(
+      minute =>
+        finiteOrFallback(
+          minute
+            .generation
+            .absorbedEnergyKWh,
+          0
+        ) * 60
     );
 
-  /*
-   * Al tratarse de intervalos de una hora:
-   *
-   * potencia media kW =
-   * energía horaria kWh / 1 h
-   *
-   * Por ello ambos valores coinciden numéricamente.
-   */
-  const averageTotalPowerKW =
-    totalGeneratedEnergyKWh.map(
-      energyKWh =>
-        energyKWh
+  const totalDeliveredEnergyKWh =
+    hourly.map(
+      (hour, hourIndex) =>
+        sumNumbers(
+          Object.values(
+            deliveredEnergyByTank
+          ).map(
+            series =>
+              finiteOrFallback(
+                series[hourIndex],
+                0
+              )
+          )
+        )
     );
 
   return {
     periodHours:
       24,
 
+    minuteCount:
+      minutes.length,
+
     hours,
 
     energy: {
-      consumptionAt60CL,
+      generatorPowerKW,
 
-      generatedEnergyByTank,
+      generatorMaximumPowerKW:
+        finiteOrFallback(
+          context.config
+            .generatorPowerKW,
+          0
+        ),
 
-      totalGeneratedEnergyKWh,
+      exchangerPowerByTankKW,
 
-      averageTotalPowerKW,
+      exchangerMaximumPowerByTankKW,
+
+      deliveredEnergyByTank,
+
+      totalDeliveredEnergyKWh,
 
       units: {
-        consumption:
-          "L/h a 60 °C",
+        power:
+          "kW",
 
-        generatedEnergy:
-          "kWh",
-
-        averagePower:
-          "kW"
+        deliveredEnergy:
+          "kWh"
       }
     },
 
@@ -2311,6 +2354,8 @@ function createChartData(
     load: {
       finalLoadByTank,
 
+      continuousLoadByTank,
+
       tightReferencePercent:
         ACS_BLOCK7_CONSTANTS
           .COMFORT_TIGHT_MAX_PERCENT,
@@ -2324,6 +2369,7 @@ function createChartData(
     }
   };
 }
+
 
 
 /* ============================================================
@@ -3564,13 +3610,12 @@ function renderInitialChart(
     window.ACSCharts &&
     typeof window
       .ACSCharts
-      .render ===
+      .renderAll ===
       "function"
   ) {
     window
       .ACSCharts
-      .render(
-        "energy",
+      .renderAll(
         analysis.charts
       );
   }

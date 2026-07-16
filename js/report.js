@@ -3,10 +3,10 @@
 /**
  * ============================================================
  * PRO ACS · GENERADOR DE INFORME PDF
- * Versión 3.3.0
+ * Versión 3.5.0
  * ============================================================
  *
- * Informe profesional de 8 páginas.
+ * Informe profesional de 10 páginas.
  *
  * PRINCIPIO DE MAQUETACIÓN:
  * Todo texto multilínea se dibuja línea a línea con un interlineado
@@ -19,9 +19,11 @@
  * 3. Datos de entrada
  * 4. Metodología
  * 5. Balance energético
- * 6. Evolución temporal: energía y resumen operativo
- * 7. Diagnóstico
- * 8. Conclusiones y responsabilidad
+ * 6. Evolución temporal: perfil de demanda y carga
+ * 7. Evolución temporal: energía y potencia
+ * 8. Tabla horaria de operación
+ * 9. Diagnóstico
+ * 10. Conclusiones y responsabilidad
  */
 
 
@@ -30,9 +32,9 @@
  * ============================================================ */
 
 const ACS_REPORT_CONFIG = Object.freeze({
-  VERSION: "3.3.0",
+  VERSION: "3.5.0",
   SOFTWARE_VERSION: "Pro ACS 1.2",
-  PAGE_COUNT: 8,
+  PAGE_COUNT: 10,
 
   PAGE: Object.freeze({
     orientation: "portrait",
@@ -381,6 +383,20 @@ function normalizeReportData(input) {
                 : null
             );
 
+          const starts =
+            numberOrNull(
+              hourGenerator.starts
+            );
+
+          const averageMinutesPerStart =
+            starts !== null &&
+            starts > 0 &&
+            numberOrNull(
+              runningMinutes
+            ) !== null
+              ? Number(runningMinutes) / starts
+              : null;
+
           return [
             `${startHour}-${endHour}`,
             formatNumber(
@@ -417,6 +433,12 @@ function normalizeReportData(input) {
               : `${formatNumber(
                   runningMinutes,
                   0
+                )} min`,
+            averageMinutesPerStart === null
+              ? "—"
+              : `${formatNumber(
+                  averageMinutesPerStart,
+                  1
                 )} min`
           ];
         }
@@ -441,6 +463,64 @@ function normalizeReportData(input) {
     notes: safeArray(report.notes),
     assessments: safeObject(report.assessments),
     charts: safeObject(report.charts),
+
+    demandProfile: (() => {
+      const suppliedProfile =
+        safeObject(
+          firstDefined(
+            input.demandProfile,
+            input.analysis?.demandProfile,
+            report.demandProfile
+          )
+        );
+
+      const hourlyDemandAt60CL =
+        safeArray(
+          firstDefined(
+            suppliedProfile.hourlyDemandAt60CL,
+            demand.hourlyDemandAt60CL,
+            demand.hourlyProfileAt60CL
+          )
+        )
+          .slice(0, 24)
+          .map(Number);
+
+      return {
+        hours:
+          safeArray(
+            suppliedProfile.hours
+          ).length === 24
+            ? suppliedProfile.hours
+            : Array.from(
+                { length: 24 },
+                (_value, hourIndex) => ({
+                  hourIndex,
+                  label:
+                    `${String(hourIndex).padStart(2, "0")}:00`
+                })
+              ),
+
+        hourlyDemandAt60CL,
+
+        referenceTemperatureC:
+          numberOrNull(
+            firstDefined(
+              suppliedProfile.referenceTemperatureC,
+              60
+            )
+          ) ?? 60,
+
+        networkTemperatureC:
+          numberOrNull(
+            firstDefined(
+              suppliedProfile.networkTemperatureC,
+              temperatures.networkTemperatureC,
+              10
+            )
+          ) ?? 10
+      };
+    })(),
+
     hourlyOperationRows
   };
 }
@@ -1389,7 +1469,7 @@ function drawCoverPage(data) {
   );
 
   doc.text(
-    "Página 1 de 8",
+    "Página 1 de 10",
     ReportState.pageWidth - ACS_REPORT_CONFIG.MARGIN.right,
     ReportState.pageHeight - 10,
     { align: "right" }
@@ -2084,51 +2164,132 @@ function drawEnergyPage(data) {
 
 
 /* ============================================================
- * PÁGINA 6 · GRÁFICAS
+ * PÁGINA 6 · PERFIL DE DEMANDA Y CARGA
  * ============================================================ */
 
-function drawChartsPage(data) {
-  addPage("Evolución temporal");
+function drawDemandAndLoadChartsPage(data) {
+  addPage("Evolución temporal · Demanda y carga");
 
   const x = ACS_REPORT_CONFIG.MARGIN.left;
 
   drawPageTitle(
     "Evolución temporal",
-    "Comportamiento energético y operación del generador durante las últimas 24 horas."
-  );
-
-  const currentView =
-    window.ACSApp?.state?.currentChartView || "energy";
-
-  const energyImage = getChartImage(
-    "energy",
-    data.charts
+    "Perfil horario de demanda y estado de carga de los depósitos durante las últimas 24 horas."
   );
 
   drawSectionLabel(
-    "Consumo y generación",
+    "Perfil horario de demanda",
     x,
     48
   );
 
   drawChart(
-    energyImage,
+    getChartImage(
+      "demand",
+      data.demandProfile
+    ),
     x,
     61,
     ReportState.contentWidth,
-    55,
-    "Gráfica de consumo y generación no disponible."
+    88,
+    "Gráfica del perfil horario de demanda no disponible."
   );
 
   drawSectionLabel(
-    "Tabla horaria de operación",
+    "Carga de los depósitos",
     x,
-    122
+    160
+  );
+
+  drawChart(
+    getChartImage(
+      "load",
+      data.charts
+    ),
+    x,
+    173,
+    ReportState.contentWidth,
+    88,
+    "Gráfica de carga no disponible."
+  );
+}
+
+
+/* ============================================================
+ * PÁGINA 7 · ENERGÍA Y POTENCIA
+ * ============================================================ */
+
+function drawEnergyAndPowerChartsPage(data) {
+  addPage("Evolución temporal · Energía y potencia");
+
+  const x = ACS_REPORT_CONFIG.MARGIN.left;
+
+  drawPageTitle(
+    "Energía y potencia",
+    "Energía entregada por hora y potencia instantánea de los equipos durante las últimas 24 horas."
+  );
+
+  drawSectionLabel(
+    "Energía entregada por hora",
+    x,
+    48
+  );
+
+  drawChart(
+    getChartImage(
+      "hourlyEnergy",
+      data.charts
+    ),
+    x,
+    61,
+    ReportState.contentWidth,
+    88,
+    "Gráfica de energía entregada por hora no disponible."
+  );
+
+  drawSectionLabel(
+    "Potencia instantánea",
+    x,
+    160
+  );
+
+  drawChart(
+    getChartImage(
+      "power",
+      data.charts
+    ),
+    x,
+    173,
+    ReportState.contentWidth,
+    88,
+    "Gráfica de potencia instantánea no disponible."
+  );
+}
+
+
+/* ============================================================
+ * PÁGINA 8 · TABLA HORARIA DE OPERACIÓN
+ * ============================================================ */
+
+function drawOperationTablePage(data) {
+  addPage("Tabla horaria de operación");
+
+  const x = ACS_REPORT_CONFIG.MARGIN.left;
+
+  drawPageTitle(
+    "Tabla horaria de operación",
+    "Balance energético y funcionamiento del generador durante cada hora de las últimas 24 horas."
+  );
+
+  drawSectionLabel(
+    "Resultados horarios",
+    x,
+    48
   );
 
   drawTable({
     x,
-    y: 135,
+    y: 61,
     headers: [
       "Hora",
       "Dem.",
@@ -2137,16 +2298,20 @@ function drawChartsPage(data) {
       "Gener.",
       "Arr.",
       "1er arr.",
-      "Func."
+      "Func.",
+      "T. medio"
     ],
     rows:
       data.hourlyOperationRows.length > 0
         ? data.hourlyOperationRows
-        : [["—", "—", "—", "—", "—", "—", "—", "—"]],
-    widths: [20, 22, 20, 23, 23, 17, 25, 28],
-    rowHeight: 5.4,
-    fontSize: 5.8
+        : [["—", "—", "—", "—", "—", "—", "—", "—", "—"]],
+    widths: [18, 20, 18, 20, 20, 14, 22, 22, 24],
+    rowHeight: 8.2,
+    fontSize: 5.9
   });
+
+  const currentView =
+    window.ACSApp?.state?.currentChartView || "load";
 
   if (
     window.ACSCharts &&
@@ -2168,32 +2333,26 @@ function drawChartsPage(data) {
 
 
 /* ============================================================
- * PÁGINA 7 · DIAGNÓSTICO
+ * PÁGINA 9 · DIAGNÓSTICO
  * ============================================================ */
 
 function drawDiagnosisPage(data) {
-  addPage("Carga y diagnóstico");
+  addPage("Diagnóstico");
 
   const x = ACS_REPORT_CONFIG.MARGIN.left;
   const colors = ACS_REPORT_CONFIG.COLORS;
 
   drawPageTitle(
-    "Carga y diagnóstico",
-    "Estado de acumulación e interpretación automática."
+    "Diagnóstico",
+    "Interpretación automática de los resultados del periodo analizado."
   );
 
-  drawSectionLabel("Carga de los depósitos", x, 52);
-
-  drawChart(
-    getChartImage("load", data.charts),
-    x,
-    66,
-    ReportState.contentWidth,
-    79,
-    "Gráfica de carga no disponible."
-  );
-
-  drawSectionLabel("Valoraciones técnicas", x, 155);
+  /*
+   * Las cuatro gráficas del informe ya se muestran consecutivamente
+   * en las páginas 6 y 7, inmediatamente antes de la tabla horaria.
+   * No se repite aquí la gráfica de carga.
+   */
+  drawSectionLabel("Valoraciones técnicas", x, 52);
 
   const assessments = [];
 
@@ -2204,15 +2363,12 @@ function drawDiagnosisPage(data) {
     });
   }
 
-  assessments.push(
-    {
-      title: "Confort",
-      assessment: safeObject(data.assessments.comfort)
-    },
+  assessments.push({
+    title: "Confort",
+    assessment: safeObject(data.assessments.comfort)
+  });
 
-  );
-
-  let y = 169;
+  let y = 68;
 
   assessments.slice(0, 3).forEach(item => {
     const level = item.assessment.level || "info";
@@ -2226,7 +2382,7 @@ function drawDiagnosisPage(data) {
       x,
       y,
       ReportState.contentWidth,
-      30,
+      42,
       {
         fill: getLevelBackground(level),
         border: getLevelColor(level)
@@ -2239,7 +2395,7 @@ function drawDiagnosisPage(data) {
 
     ReportState.doc.circle(
       x + 8,
-      y + 8,
+      y + 9,
       2.5,
       "F"
     );
@@ -2249,7 +2405,7 @@ function drawDiagnosisPage(data) {
       x + 14,
       y + 3,
       ReportState.contentWidth - 21,
-      8,
+      9,
       {
         fontSize: 9.2,
         minFontSize: 8,
@@ -2262,24 +2418,53 @@ function drawDiagnosisPage(data) {
     drawParagraph(
       description || "Sin valoración disponible.",
       x + 14,
-      y + 17,
+      y + 18,
       ReportState.contentWidth - 21,
       {
-        fontSize: 7.7,
-        lineGap: 3.9,
+        fontSize: 7.8,
+        lineGap: 4,
         color: colors.textSoft,
-        maxLines: 3
+        maxLines: 5
       }
     );
 
-    y += 35;
+    y += 49;
   });
 
+  drawSectionLabel(
+    "Lectura conjunta de los resultados",
+    x,
+    Math.max(181, y + 4)
+  );
+
+  drawCard(
+    x,
+    Math.max(196, y + 19),
+    ReportState.contentWidth,
+    58,
+    {
+      fill: colors.surface,
+      border: colors.line
+    }
+  );
+
+  drawParagraph(
+    "El perfil horario permite identificar cuándo se concentra la demanda. La gráfica de carga muestra la respuesta de la acumulación, la energía horaria cuantifica el aporte útil de cada intercambiador y la potencia instantánea permite comprobar los periodos reales de funcionamiento y sus límites. La tabla siguiente a las gráficas completa esta lectura con el balance de cada hora.",
+    x + 7,
+    Math.max(208, y + 31),
+    ReportState.contentWidth - 14,
+    {
+      fontSize: 8.1,
+      lineGap: 4.2,
+      color: colors.textSoft,
+      maxLines: 8
+    }
+  );
 }
 
 
 /* ============================================================
- * PÁGINA 8 · CONCLUSIONES Y RESPONSABILIDAD
+ * PÁGINA 10 · CONCLUSIONES Y RESPONSABILIDAD
  * ============================================================ */
 
 function drawConclusionsPage(data) {
@@ -2445,7 +2630,9 @@ function buildPdf(input) {
   drawInputsPage(data);
   drawMethodologyPage(data);
   drawEnergyPage(data);
-  drawChartsPage(data);
+  drawDemandAndLoadChartsPage(data);
+  drawEnergyAndPowerChartsPage(data);
+  drawOperationTablePage(data);
   drawDiagnosisPage(data);
   drawConclusionsPage(data);
 
