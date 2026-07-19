@@ -3,10 +3,10 @@
 /**
  * ============================================================
  * PRO ACS · GENERADOR DE INFORME PDF
- * Versión 3.7.0
+ * Versión 3.7.2
  * ============================================================
  *
- * Informe profesional de 13 páginas.
+ * Informe profesional de 14 páginas.
  *
  * PRINCIPIO DE MAQUETACIÓN:
  * Todo texto multilínea se dibuja línea a línea con un interlineado
@@ -15,18 +15,19 @@
  *
  * Páginas:
  * 1. Portada
- * 2. Datos generales del proyecto
- * 3. Demanda de ACS
- * 4. Depósitos y temperaturas
- * 5. Generador
- * 6. Resultados generales
+ * 2. Índice
+ * 3. Datos generales del proyecto
+ * 4. Resumen ejecutivo
+ * 5. Demanda de ACS
+ * 6. Depósitos y temperaturas
  * 7. Balance y acumulación
- * 8. Valoraciones
+ * 8. Generador
  * 9. Evolución temporal: perfil de demanda y carga
  * 10. Evolución temporal: energía y potencia
  * 11. Tabla horaria de operación
- * 12. Metodología
- * 13. Responsabilidad y condiciones de uso
+ * 12. Diagnóstico y valoraciones
+ * 13. Metodología
+ * 14. Responsabilidad y condiciones de uso
  */
 
 
@@ -35,9 +36,9 @@
  * ============================================================ */
 
 const ACS_REPORT_CONFIG = Object.freeze({
-  VERSION: "3.7.0",
+  VERSION: "3.7.2",
   SOFTWARE_VERSION: "Pro ACS 1.2",
-  PAGE_COUNT: 13,
+  PAGE_COUNT: 14,
 
   PAGE: Object.freeze({
     orientation: "portrait",
@@ -1433,7 +1434,77 @@ function drawCoverPage(data) {
 
 
 /* ============================================================
- * PÁGINA 2 · DATOS GENERALES DEL PROYECTO
+ * PÁGINA 2 · ÍNDICE
+ * ============================================================ */
+
+function drawIndexPage() {
+  addPage("Índice");
+
+  const doc = ReportState.doc;
+  const x = ACS_REPORT_CONFIG.MARGIN.left;
+  const colors = ACS_REPORT_CONFIG.COLORS;
+
+  drawPageTitle(
+    "Índice",
+    "Contenido y estructura del informe técnico."
+  );
+
+  const entries = [
+    ["Datos generales del proyecto", 3],
+    ["Resumen ejecutivo", 4],
+    ["Demanda de ACS", 5],
+    ["Depósitos y temperaturas", 6],
+    ["Balance y acumulación", 7],
+    ["Generador", 8],
+    ["Evolución temporal: perfil de demanda y carga", 9],
+    ["Evolución temporal: energía y potencia", 10],
+    ["Tabla horaria de operación", 11],
+    ["Diagnóstico y valoraciones", 12],
+    ["Metodología", 13],
+    ["Responsabilidad y condiciones de uso", 14]
+  ];
+
+  const startY = 58;
+  const rowHeight = 16;
+
+  entries.forEach(([label, page], index) => {
+    const y = startY + index * rowHeight;
+
+    if (index % 2 === 0) {
+      doc.setFillColor(...colors.surface);
+      doc.roundedRect(x, y - 7, ReportState.contentWidth, 13, 1.5, 1.5, "F");
+    }
+
+    setFont({
+      size: 9.2,
+      style: index < 5 ? "bold" : "normal",
+      color: colors.navy
+    });
+
+    doc.text(label, x + 5, y);
+
+    doc.setDrawColor(...colors.line);
+    doc.setLineWidth(0.2);
+    doc.line(x + 112, y - 1, x + ReportState.contentWidth - 15, y - 1);
+
+    setFont({
+      size: 9.2,
+      style: "bold",
+      color: colors.blue
+    });
+
+    doc.text(
+      String(page),
+      x + ReportState.contentWidth - 5,
+      y,
+      { align: "right" }
+    );
+  });
+}
+
+
+/* ============================================================
+ * PÁGINA 3 · DATOS GENERALES DEL PROYECTO
  * ============================================================ */
 
 function drawProjectPage(data) {
@@ -1540,7 +1611,7 @@ function drawProjectPage(data) {
 
 
 /* ============================================================
- * PÁGINA 6 · RESULTADOS GENERALES
+ * PÁGINA 4 · RESUMEN EJECUTIVO
  * ============================================================ */
 
 function drawExecutivePage(data) {
@@ -1732,7 +1803,7 @@ function drawExecutivePage(data) {
 
 
 /* ============================================================
- * PÁGINA 3 · DATOS DE ENTRADA
+ * SECCIÓN LEGACY · DATOS DE ENTRADA (NO UTILIZADA)
  * ============================================================ */
 
 function drawInputsPage(data) {
@@ -1947,7 +2018,7 @@ function drawInputsPage(data) {
 
 
 /* ============================================================
- * PÁGINA 4 · METODOLOGÍA
+ * PÁGINA 13 · METODOLOGÍA
  * ============================================================ */
 
 function drawMethodologyPage() {
@@ -2055,7 +2126,7 @@ function drawMethodologyPage() {
 
 
 /* ============================================================
- * PÁGINA 5 · BALANCE
+ * PÁGINA 7 · BALANCE Y ACUMULACIÓN
  * ============================================================ */
 
 function drawEnergyPage(data) {
@@ -2208,7 +2279,7 @@ function drawEnergyPage(data) {
 
 
 /* ============================================================
- * PÁGINA 6 · PERFIL DE DEMANDA Y CARGA
+ * PÁGINA 9 · PERFIL DE DEMANDA Y CARGA
  * ============================================================ */
 
 function drawDemandAndLoadChartsPage(data) {
@@ -2255,7 +2326,7 @@ function drawDemandAndLoadChartsPage(data) {
 
 
 /* ============================================================
- * PÁGINA 7 · ENERGÍA Y POTENCIA
+ * PÁGINA 10 · ENERGÍA Y POTENCIA
  * ============================================================ */
 
 function drawEnergyAndPowerChartsPage(data) {
@@ -2307,7 +2378,7 @@ function drawEnergyAndPowerChartsPage(data) {
 
 
 /* ============================================================
- * PÁGINA 8 · TABLA HORARIA DE OPERACIÓN
+ * PÁGINA 11 · TABLA HORARIA DE OPERACIÓN
  * ============================================================ */
 
 function drawOperationTablePage(data) {
@@ -2372,7 +2443,7 @@ function drawOperationTablePage(data) {
 
 
 /* ============================================================
- * PÁGINA 9 · DIAGNÓSTICO
+ * PÁGINA 12 · DIAGNÓSTICO
  * ============================================================ */
 
 function drawDiagnosisPage(data) {
@@ -2388,7 +2459,7 @@ function drawDiagnosisPage(data) {
 
   /*
    * Las cuatro gráficas del informe ya se muestran consecutivamente
-   * en las páginas 6 y 7, inmediatamente antes de la tabla horaria.
+   * en las páginas 9 y 10 y en la tabla horaria de la página 11.
    * No se repite aquí la gráfica de carga.
    */
   drawSectionLabel("Valoraciones técnicas", x, 52);
@@ -2511,7 +2582,7 @@ function drawDiagnosisPage(data) {
 
 
 /* ============================================================
- * PÁGINA 10 · RESPONSABILIDAD Y CONDICIONES DE USO
+ * PÁGINA 14 · RESPONSABILIDAD Y CONDICIONES DE USO
  * ============================================================ */
 
 function drawResponsibilityPage() {
@@ -2611,16 +2682,17 @@ function buildPdf(input) {
   const data = normalizeReportData(input);
 
   drawCoverPage(data);
+  drawIndexPage();
   drawProjectPage(data);
+  drawExecutivePage(data);
   drawDemandPage(data);
   drawStoragePage(data);
-  drawGeneratorPage(data);
-  drawExecutivePage(data);
   drawEnergyPage(data);
-  drawDiagnosisPage(data);
+  drawGeneratorPage(data);
   drawDemandAndLoadChartsPage(data);
   drawEnergyAndPowerChartsPage(data);
   drawOperationTablePage(data);
+  drawDiagnosisPage(data);
   drawMethodologyPage(data);
   drawResponsibilityPage();
 
@@ -2713,7 +2785,7 @@ if (
 
 
 /* ============================================================
- * PÁGINA 3 · DEMANDA DE ACS
+ * PÁGINA 5 · DEMANDA DE ACS
  * ============================================================ */
 
 function drawDemandPage(data) {
@@ -2827,7 +2899,7 @@ function drawDemandPage(data) {
 
 
 /* ============================================================
- * PÁGINA 4 · DEPÓSITOS Y TEMPERATURAS
+ * PÁGINA 6 · DEPÓSITOS Y TEMPERATURAS
  * ============================================================ */
 
 function drawStoragePage(data) {
@@ -2968,7 +3040,7 @@ function drawStoragePage(data) {
 
 
 /* ============================================================
- * PÁGINA 5 · GENERADOR
+ * PÁGINA 8 · GENERADOR
  * ============================================================ */
 
 function drawGeneratorPage(data) {

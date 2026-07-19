@@ -1024,8 +1024,8 @@ function createCustomProfileHourControl(
       <input
         type="range"
         min="0"
-        max="25"
-        step="0.1"
+        max="100"
+        step="0.5"
         value="${customDemandProfileValues[hourIndex]}"
         aria-label="Porcentaje de demanda a las ${hour}:00"
       >
