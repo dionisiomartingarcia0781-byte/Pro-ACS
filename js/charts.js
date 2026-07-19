@@ -4,7 +4,7 @@
  * ============================================================
  * PRO ACS
  * GRÁFICAS DE DEMANDA Y RESULTADOS
- * Versión 2.1.0
+ * Versión 3.0.0
  * ============================================================
  *
  * Responsabilidades:
@@ -24,7 +24,7 @@
  * ============================================================ */
 
 const ACS_CHARTS_CONFIG = Object.freeze({
-  VERSION: "2.1.0",
+  VERSION: "3.1.0",
 
   MINIMUM_WIDTH_PX: 960,
   DEMAND_MINIMUM_WIDTH_PX: 720,
@@ -91,7 +91,11 @@ const ACSChartsState = {
 
   demandHoverHandler: null,
 
-  demandLeaveHandler: null
+  demandLeaveHandler: null,
+
+  powerHoverHandler: null,
+
+  powerLeaveHandler: null
 };
 
 
@@ -261,6 +265,219 @@ function createDefaultHours() {
  *
  * 1,163 Wh/(L·K) = 0,001163 kWh/(L·K)
  */
+
+
+/**
+ * Comprueba si una colección de series contiene al menos un valor finito.
+ */
+function hasUsableSeriesCollection(collection) {
+  if (!collection || typeof collection !== "object") {
+    return false;
+  }
+
+  return Object.values(collection).some(
+    series =>
+      Array.isArray(series) &&
+      series.some(isFiniteNumber)
+  );
+}
+
+
+function hasNonZeroSeriesCollection(collection, epsilon = 1e-9) {
+  if (!collection || typeof collection !== "object") {
+    return false;
+  }
+
+  return Object.values(collection).some(
+    series =>
+      Array.isArray(series) &&
+      series.some(
+        value =>
+          isFiniteNumber(value) &&
+          Math.abs(value) > epsilon
+      )
+  );
+}
+
+
+/**
+ * Expande 24 valores horarios a una serie minuto a minuto.
+ * Cada valor horario se interpreta como potencia media durante esa hora.
+ */
+function expandHourlySeriesToMinutes(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return values
+    .slice(0, 24)
+    .flatMap(value =>
+      Array(60).fill(
+        finiteOrFallbackForChart(value, 0)
+      )
+    );
+}
+
+
+/**
+ * Normaliza los datos recibidos por las gráficas de resultados.
+ *
+ * Prioridad:
+ * 1. Series minuto a minuto reales.
+ * 2. Series horarias del bloque 7.
+ * 3. Energía horaria convertida en potencia media (kWh/h = kW).
+ */
+function normalizeResultsChartData(chartData) {
+  const normalized = {
+    ...chartData,
+    hours:
+      Array.isArray(chartData?.hours) &&
+      chartData.hours.length === 24
+        ? chartData.hours
+        : createDefaultHours(),
+    energy: {
+      ...(chartData?.energy || {})
+    },
+    load: {
+      ...(chartData?.load || {})
+    }
+  };
+
+  const energy = normalized.energy;
+  const load = normalized.load;
+
+  const finalLoadByTank =
+    load.finalLoadByTank &&
+    typeof load.finalLoadByTank === "object"
+      ? load.finalLoadByTank
+      : {};
+
+  const finalLoadHasMovement =
+    hasNonZeroSeriesCollection(
+      finalLoadByTank
+    );
+
+  if (
+    !hasUsableSeriesCollection(
+      load.continuousLoadByTank
+    ) ||
+    (
+      !hasNonZeroSeriesCollection(
+        load.continuousLoadByTank
+      ) &&
+      finalLoadHasMovement
+    )
+  ) {
+    load.continuousLoadByTank =
+      Object.fromEntries(
+        Object.entries(finalLoadByTank).map(
+          ([tankId, values]) => [
+            tankId,
+            expandHourlySeriesToMinutes(values)
+          ]
+        )
+      );
+  }
+
+  const deliveredEnergyByTank =
+    energy.deliveredEnergyByTank &&
+    typeof energy.deliveredEnergyByTank === "object"
+      ? energy.deliveredEnergyByTank
+      : {};
+
+  if (
+    !hasUsableSeriesCollection(
+      energy.exchangerPowerByTankKW
+    ) ||
+    (
+      !hasNonZeroSeriesCollection(
+        energy.exchangerPowerByTankKW
+      ) &&
+      hasNonZeroSeriesCollection(
+        deliveredEnergyByTank
+      )
+    )
+  ) {
+    energy.exchangerPowerByTankKW =
+      Object.fromEntries(
+        Object.entries(deliveredEnergyByTank).map(
+          ([tankId, hourlyEnergyKWh]) => [
+            tankId,
+            expandHourlySeriesToMinutes(hourlyEnergyKWh)
+          ]
+        )
+      );
+  }
+
+  const deliveredTotalHasEnergy =
+    Array.isArray(
+      energy.totalDeliveredEnergyKWh
+    ) &&
+    energy.totalDeliveredEnergyKWh.some(
+      value =>
+        isFiniteNumber(value) &&
+        Math.abs(value) > 1e-9
+    );
+
+  const generatorHasPower =
+    Array.isArray(energy.generatorPowerKW) &&
+    energy.generatorPowerKW.some(
+      value =>
+        isFiniteNumber(value) &&
+        Math.abs(value) > 1e-9
+    );
+
+  if (
+    !Array.isArray(energy.generatorPowerKW) ||
+    !energy.generatorPowerKW.some(isFiniteNumber) ||
+    (
+      !generatorHasPower &&
+      (
+        deliveredTotalHasEnergy ||
+        hasNonZeroSeriesCollection(
+          deliveredEnergyByTank
+        )
+      )
+    )
+  ) {
+    let hourlyGeneratorPowerKW = [];
+
+    if (
+      Array.isArray(energy.totalDeliveredEnergyKWh) &&
+      energy.totalDeliveredEnergyKWh.length > 0
+    ) {
+      hourlyGeneratorPowerKW =
+        energy.totalDeliveredEnergyKWh;
+    } else {
+      const tankSeries =
+        Object.values(deliveredEnergyByTank)
+          .filter(Array.isArray);
+
+      hourlyGeneratorPowerKW =
+        Array.from(
+          { length: 24 },
+          (_value, hourIndex) =>
+            tankSeries.reduce(
+              (total, series) =>
+                total +
+                finiteOrFallbackForChart(
+                  series[hourIndex],
+                  0
+                ),
+              0
+            )
+        );
+    }
+
+    energy.generatorPowerKW =
+      expandHourlySeriesToMinutes(
+        hourlyGeneratorPowerKW
+      );
+  }
+
+  return normalized;
+}
+
 function calculateEquivalentEnergyKWh(
   volumeL,
   referenceTemperatureC,
@@ -642,7 +859,7 @@ function drawHorizontalAxis(
     "600 12px system-ui, sans-serif";
 
   context.fillText(
-    "Hora",
+    "Tiempo (h)",
     (
       plot.left +
       plot.right
@@ -1688,9 +1905,14 @@ function drawLoadChart(
     chartData.load;
 
   const loadSeriesByTank =
-    data.continuousLoadByTank ||
-    data.finalLoadByTank ||
-    {};
+    hasUsableSeriesCollection(
+      data.continuousLoadByTank
+    )
+      ? data.continuousLoadByTank
+      : (
+          data.finalLoadByTank ||
+          {}
+        );
 
   const tankIds =
     Object.keys(
@@ -2116,7 +2338,7 @@ function drawLaneTimeAxis(
     "600 12px system-ui, sans-serif";
 
   context.fillText(
-    "Hora",
+    "Tiempo (h)",
     (
       plot.left +
       plot.right
@@ -2131,22 +2353,39 @@ function drawLaneTimeAxis(
 /**
  * Dibuja un carril operativo sin solaparse con los demás.
  */
-function drawOperatingLane(
+function drawPowerLane(
   context,
   lane,
-  plot,
+  lanePlot,
   seriesLength
 ) {
-  const laneHeight = 46;
-  const barHeight = 20;
-  const laneTop =
-    lane.centerY -
-    laneHeight / 2;
+  const laneHeight =
+    lanePlot.bottom -
+    lanePlot.top;
+
+  const maximum =
+    getNiceMaximum(
+      Math.max(
+        lane.maximumPowerKW,
+        getMaximumFromSeries(
+          [lane.values],
+          0
+        ),
+        1
+      ) * 1.05
+    );
 
   context.save();
 
   context.fillStyle =
     lane.background;
+
+  context.fillRect(
+    lanePlot.left,
+    lanePlot.top,
+    lanePlot.width,
+    laneHeight
+  );
 
   context.strokeStyle =
     ACS_CHARTS_CONFIG
@@ -2155,27 +2394,79 @@ function drawOperatingLane(
 
   context.lineWidth = 1;
 
-  context.fillRect(
-    plot.left,
-    laneTop,
-    plot.width,
+  context.strokeRect(
+    lanePlot.left,
+    lanePlot.top,
+    lanePlot.width,
     laneHeight
   );
 
-  context.strokeRect(
-    plot.left,
-    laneTop,
-    plot.width,
-    laneHeight
-  );
+  const horizontalDivisions = 2;
+
+  for (
+    let division = 0;
+    division <= horizontalDivisions;
+    division += 1
+  ) {
+    const ratio =
+      division /
+      horizontalDivisions;
+
+    const y =
+      lanePlot.bottom -
+      lanePlot.height *
+      ratio;
+
+    const value =
+      maximum * ratio;
+
+    context.strokeStyle =
+      ACS_CHARTS_CONFIG
+        .COLORS
+        .grid;
+
+    context.setLineDash([4, 5]);
+    context.beginPath();
+    context.moveTo(
+      lanePlot.left,
+      y
+    );
+    context.lineTo(
+      lanePlot.right,
+      y
+    );
+    context.stroke();
+    context.setLineDash([]);
+
+    context.fillStyle =
+      ACS_CHARTS_CONFIG
+        .COLORS
+        .axis;
+
+    context.font =
+      "10px system-ui, sans-serif";
+
+    context.textAlign =
+      "right";
+
+    context.textBaseline =
+      "middle";
+
+    context.fillText(
+      formatNumber(
+        value,
+        value < 10 ? 1 : 0
+      ),
+      lanePlot.left - 10,
+      y
+    );
+  }
 
   context.fillStyle =
-    ACS_CHARTS_CONFIG
-      .COLORS
-      .text;
+    lane.color;
 
   context.font =
-    "600 12px system-ui, sans-serif";
+    "700 12px system-ui, sans-serif";
 
   context.textAlign =
     "right";
@@ -2185,8 +2476,8 @@ function drawOperatingLane(
 
   context.fillText(
     lane.label,
-    plot.left - 14,
-    lane.centerY - 7
+    lanePlot.left - 42,
+    lanePlot.top + 18
   );
 
   context.fillStyle =
@@ -2195,73 +2486,348 @@ function drawOperatingLane(
       .axis;
 
   context.font =
-    "11px system-ui, sans-serif";
+    "10px system-ui, sans-serif";
 
   context.fillText(
-    `${formatNumber(
-      lane.maximumPowerKW,
-      1
-    )} kW`,
-    plot.left - 14,
-    lane.centerY + 10
+    "Potencia (kW)",
+    lanePlot.left - 42,
+    lanePlot.top + 34
   );
 
-  const intervals =
-    buildRunningIntervals(
-      lane.values
-    );
+  context.strokeStyle =
+    lane.color;
 
-  intervals.forEach(
-    interval => {
-      const xStart =
-        plot.left +
-        plot.width *
-        interval.startIndex /
-        seriesLength;
+  context.lineWidth = 2;
+  context.lineJoin = "round";
+  context.lineCap = "round";
+  context.beginPath();
 
-      const xEnd =
-        plot.left +
-        plot.width *
-        interval.endIndex /
-        seriesLength;
+  let started = false;
 
-      const width =
-        Math.max(
-          1,
-          xEnd - xStart
+  lane.values.forEach(
+    (
+      rawValue,
+      index
+    ) => {
+      if (!isFiniteNumber(rawValue)) {
+        started = false;
+        return;
+      }
+
+      const value =
+        clamp(
+          rawValue,
+          0,
+          maximum
         );
 
-      context.fillStyle =
-        lane.color;
+      const x =
+        lanePlot.left +
+        lanePlot.width *
+        index /
+        Math.max(
+          1,
+          seriesLength - 1
+        );
 
-      context.fillRect(
-        xStart,
-        lane.centerY -
-          barHeight / 2,
-        width,
-        barHeight
-      );
+      const y =
+        valueToY(
+          value,
+          0,
+          maximum,
+          lanePlot
+        );
 
-      /*
-       * Marca vertical de arranque al principio de cada ciclo.
-       */
-      context.fillStyle =
-        ACS_CHARTS_CONFIG
-          .COLORS
-          .text;
-
-      context.fillRect(
-        xStart,
-        lane.centerY -
-          barHeight / 2 -
-          4,
-        1.5,
-        barHeight + 8
-      );
+      if (!started) {
+        context.moveTo(
+          x,
+          y
+        );
+        started = true;
+      } else {
+        context.lineTo(
+          x,
+          y
+        );
+      }
     }
   );
 
+  context.stroke();
   context.restore();
+}
+
+
+function getOrCreatePowerTooltip(
+  canvas
+) {
+  const container =
+    canvas.closest(
+      ".chart-container"
+    );
+
+  if (!container) {
+    return null;
+  }
+
+  if (
+    window.getComputedStyle(container)
+      .position === "static"
+  ) {
+    container.style.position =
+      "relative";
+  }
+
+  let tooltip =
+    container.querySelector(
+      ".acs-power-chart-tooltip"
+    );
+
+  if (!tooltip) {
+    tooltip =
+      document.createElement("div");
+
+    tooltip.className =
+      "acs-power-chart-tooltip";
+
+    Object.assign(
+      tooltip.style,
+      {
+        position: "absolute",
+        display: "none",
+        pointerEvents: "none",
+        zIndex: "5",
+        padding: "0.65rem 0.8rem",
+        borderRadius: "0.6rem",
+        background: "#ffffff",
+        color:
+          ACS_CHARTS_CONFIG
+            .COLORS
+            .text,
+        border: "1px solid #e2e8f0",
+        font:
+          "12px system-ui, sans-serif",
+        lineHeight: "1.55",
+        boxShadow:
+          "0 10px 28px rgba(15, 23, 42, 0.18)",
+        whiteSpace: "nowrap"
+      }
+    );
+
+    container.appendChild(
+      tooltip
+    );
+  }
+
+  return tooltip;
+}
+
+
+function attachPowerTooltip(
+  canvas,
+  plot,
+  lanes,
+  seriesLength
+) {
+  const tooltip =
+    getOrCreatePowerTooltip(
+      canvas
+    );
+
+  if (!tooltip) {
+    return;
+  }
+
+  if (
+    ACSChartsState.powerHoverHandler
+  ) {
+    canvas.removeEventListener(
+      "mousemove",
+      ACSChartsState
+        .powerHoverHandler
+    );
+  }
+
+  if (
+    ACSChartsState.powerLeaveHandler
+  ) {
+    canvas.removeEventListener(
+      "mouseleave",
+      ACSChartsState
+        .powerLeaveHandler
+    );
+  }
+
+  const hoverHandler =
+    event => {
+      const rect =
+        canvas.getBoundingClientRect();
+
+      const scaleX =
+        canvas.width /
+        Math.max(
+          1,
+          rect.width
+        );
+
+      const scaleY =
+        canvas.height /
+        Math.max(
+          1,
+          rect.height
+        );
+
+      const x =
+        (
+          event.clientX -
+          rect.left
+        ) * scaleX;
+
+      const y =
+        (
+          event.clientY -
+          rect.top
+        ) * scaleY;
+
+      if (
+        x < plot.left ||
+        x > plot.right ||
+        y < plot.top ||
+        y > plot.bottom
+      ) {
+        tooltip.style.display =
+          "none";
+        return;
+      }
+
+      const index =
+        clamp(
+          Math.round(
+            (
+              x -
+              plot.left
+            ) /
+            Math.max(
+              1,
+              plot.width
+            ) *
+            Math.max(
+              0,
+              seriesLength - 1
+            )
+          ),
+          0,
+          Math.max(
+            0,
+            seriesLength - 1
+          )
+        );
+
+      const minute =
+        Math.round(
+          index /
+          Math.max(
+            1,
+            seriesLength - 1
+          ) * 1440
+        );
+
+      const hour =
+        Math.floor(
+          minute / 60
+        ) % 24;
+
+      const minuteOfHour =
+        minute % 60;
+
+      const rows =
+        lanes.map(
+          lane => {
+            const value =
+              finiteOrFallbackForChart(
+                lane.values[index],
+                0
+              );
+
+            return `
+              <div style="display:flex;align-items:center;gap:0.45rem;">
+                <span style="width:0.55rem;height:0.55rem;border-radius:999px;background:${escapeHtml(
+                  lane.color
+                )};display:inline-block;"></span>
+                <span>${escapeHtml(
+                  lane.label
+                )}: <strong>${formatNumber(
+                  value,
+                  2
+                )} kW</strong></span>
+              </div>
+            `;
+          }
+        )
+        .join("");
+
+      tooltip.innerHTML = `
+        <div style="font-weight:700;margin-bottom:0.25rem;">
+          ${String(hour).padStart(2, "0")}:${String(
+            minuteOfHour
+          ).padStart(2, "0")}
+        </div>
+        ${rows}
+      `;
+
+      tooltip.style.display =
+        "block";
+
+      const displayX =
+        event.clientX -
+        rect.left;
+
+      const displayY =
+        event.clientY -
+        rect.top;
+
+      const tooltipWidth =
+        tooltip.offsetWidth;
+
+      tooltip.style.left =
+        `${clamp(
+          displayX + 14,
+          4,
+          rect.width -
+          tooltipWidth -
+          4
+        )}px`;
+
+      tooltip.style.top =
+        `${Math.max(
+          4,
+          displayY - 74
+        )}px`;
+    };
+
+  const leaveHandler =
+    () => {
+      tooltip.style.display =
+        "none";
+    };
+
+  canvas.addEventListener(
+    "mousemove",
+    hoverHandler
+  );
+
+  canvas.addEventListener(
+    "mouseleave",
+    leaveHandler
+  );
+
+  ACSChartsState
+    .powerHoverHandler =
+    hoverHandler;
+
+  ACSChartsState
+    .powerLeaveHandler =
+    leaveHandler;
 }
 
 
@@ -2320,47 +2886,11 @@ function drawPowerChart(
         )
       : 1440;
 
-  /*
-   * Se reserva espacio a la izquierda para los nombres y potencias.
-   */
-  const lanePlot = {
-    left:
-      plot.left + 145,
-
-    right:
-      plot.right,
-
-    top:
-      plot.top + 8,
-
-    bottom:
-      plot.bottom - 8,
-
-    width:
-      plot.width - 145,
-
-    height:
-      plot.height - 16
-  };
-
-  const laneCount =
-    1 + tankIds.length;
-
-  const laneSpacing =
-    lanePlot.height /
-    Math.max(
-      1,
-      laneCount
-    );
-
   const lanes = [
     {
-      label:
-        "Generador",
-
+      label: "Generador",
       values:
         generatorSeries,
-
       maximumPowerKW:
         finiteOrFallbackForChart(
           data.generatorMaximumPowerKW,
@@ -2369,24 +2899,20 @@ function drawPowerChart(
             0
           )
         ),
-
       color:
         ACS_CHARTS_CONFIG
           .COLORS
           .generatorPower,
-
       background:
-        "rgba(220, 38, 38, 0.06)"
+        "rgba(220, 38, 38, 0.025)"
     },
-
     ...tankIds.map(
       (
         tankId,
         index
       ) => ({
         label:
-          `Intercambiador ${tankId}`,
-
+          `D${index + 1}`,
         values:
           Array.isArray(
             exchangerPowerByTankKW[
@@ -2397,7 +2923,6 @@ function drawPowerChart(
                 tankId
               ]
             : [],
-
         maximumPowerKW:
           finiteOrFallbackForChart(
             maximumPowerByTank[
@@ -2412,7 +2937,6 @@ function drawPowerChart(
               0
             )
           ),
-
         color:
           index === 0
             ? ACS_CHARTS_CONFIG
@@ -2421,55 +2945,339 @@ function drawPowerChart(
             : ACS_CHARTS_CONFIG
                 .COLORS
                 .exchanger2Power,
-
         background:
           index === 0
-            ? "rgba(29, 78, 216, 0.06)"
-            : "rgba(21, 128, 61, 0.06)"
+            ? "rgba(29, 78, 216, 0.025)"
+            : "rgba(21, 128, 61, 0.025)"
       })
     )
   ];
 
-  drawLaneTimeAxis(
-    context,
-    lanePlot
-  );
+  const laneContainer = {
+    left:
+      plot.left + 120,
+    right:
+      plot.right,
+    top:
+      plot.top,
+    bottom:
+      plot.bottom,
+    width:
+      plot.width - 120,
+    height:
+      plot.height
+  };
+
+  const gap = 14;
+  const laneHeight =
+    (
+      laneContainer.height -
+      gap *
+      Math.max(
+        0,
+        lanes.length - 1
+      )
+    ) /
+    Math.max(
+      1,
+      lanes.length
+    );
 
   lanes.forEach(
     (
       lane,
       index
     ) => {
-      drawOperatingLane(
-        context,
-        {
-          ...lane,
+      const top =
+        laneContainer.top +
+        index *
+        (
+          laneHeight +
+          gap
+        );
 
-          centerY:
-            lanePlot.top +
-            laneSpacing *
-            (
-              index + 0.5
-            )
-        },
+      const lanePlot = {
+        left:
+          laneContainer.left,
+        right:
+          laneContainer.right,
+        top,
+        bottom:
+          top + laneHeight,
+        width:
+          laneContainer.width,
+        height:
+          laneHeight
+      };
+
+      drawPowerLane(
+        context,
+        lane,
         lanePlot,
         seriesLength
       );
     }
   );
 
+  drawLaneTimeAxis(
+    context,
+    laneContainer
+  );
+
   renderLegend(
     lanes.map(
       lane => ({
         label:
-          `${lane.label} · ${formatNumber(
-            lane.maximumPowerKW,
-            1
-          )} kW`,
+          lane.label,
         color:
           lane.color
       })
     ),
+    "power"
+  );
+
+  const canvas =
+    context.canvas;
+
+  attachPowerTooltip(
+    canvas,
+    laneContainer,
+    lanes,
+    seriesLength
+  );
+}
+
+
+/**
+ * Dibuja la potencia instantánea todo/nada del generador.
+ * La altura es siempre la potencia nominal y la anchura de cada tramo
+ * representa el tiempo equivalente real obtenido de E / P.
+ */
+function drawGeneratorInstantPowerChart(
+  context,
+  plot,
+  chartData
+) {
+  const data =
+    chartData.energy || {};
+
+  const nominalPowerKW =
+    finiteOrFallbackForChart(
+      data.generatorMaximumPowerKW,
+      0
+    );
+
+  const intervals =
+    Array.isArray(
+      data.generatorOperatingIntervals
+    )
+      ? data.generatorOperatingIntervals
+          .filter(
+            interval =>
+              isFiniteNumber(
+                interval?.startMinute
+              ) &&
+              isFiniteNumber(
+                interval?.endMinute
+              ) &&
+              interval.endMinute >
+                interval.startMinute
+          )
+      : [];
+
+  const maximumPowerKW =
+    getNiceMaximum(
+      Math.max(
+        nominalPowerKW,
+        1
+      ) * 1.05
+    );
+
+  drawVerticalAxis(
+    context,
+    plot,
+    {
+      minimum: 0,
+      maximum:
+        maximumPowerKW,
+      label:
+        "Potencia instantánea (kW)",
+      side:
+        "left"
+    }
+  );
+
+  drawLaneTimeAxis(
+    context,
+    plot
+  );
+
+  const yPower =
+    valueToY(
+      nominalPowerKW,
+      0,
+      maximumPowerKW,
+      plot
+    );
+
+  context.save();
+
+  context.strokeStyle =
+    ACS_CHARTS_CONFIG
+      .COLORS
+      .generatorPower;
+
+  context.lineWidth = 2;
+  context.lineJoin = "miter";
+  context.lineCap = "butt";
+
+  if (
+    intervals.length > 0 &&
+    nominalPowerKW > 0
+  ) {
+    intervals.forEach(
+      interval => {
+        const startMinute =
+          clamp(
+            interval.startMinute,
+            0,
+            1440
+          );
+
+        const endMinute =
+          clamp(
+            interval.endMinute,
+            0,
+            1440
+          );
+
+        const xStart =
+          plot.left +
+          plot.width *
+          startMinute /
+          1440;
+
+        const xEnd =
+          plot.left +
+          plot.width *
+          endMinute /
+          1440;
+
+        context.beginPath();
+        context.moveTo(
+          xStart,
+          plot.bottom
+        );
+        context.lineTo(
+          xStart,
+          yPower
+        );
+        context.lineTo(
+          xEnd,
+          yPower
+        );
+        context.lineTo(
+          xEnd,
+          plot.bottom
+        );
+        context.stroke();
+      }
+    );
+  } else {
+    /*
+     * Compatibilidad defensiva con resultados antiguos. Sólo se utiliza
+     * cuando app.js no ha entregado la cronología de ciclos.
+     */
+    const fallbackPowerSeries =
+      Array.isArray(
+        data.generatorPowerKW
+      )
+        ? data.generatorPowerKW
+        : [];
+
+    const fallbackIntervals =
+      buildRunningIntervals(
+        fallbackPowerSeries
+      );
+
+    const pointCount =
+      Math.max(
+        1,
+        fallbackPowerSeries.length
+      );
+
+    fallbackIntervals.forEach(
+      interval => {
+        const xStart =
+          plot.left +
+          plot.width *
+          interval.startIndex /
+          pointCount;
+
+        const xEnd =
+          plot.left +
+          plot.width *
+          interval.endIndex /
+          pointCount;
+
+        context.beginPath();
+        context.moveTo(
+          xStart,
+          plot.bottom
+        );
+        context.lineTo(
+          xStart,
+          yPower
+        );
+        context.lineTo(
+          xEnd,
+          yPower
+        );
+        context.lineTo(
+          xEnd,
+          plot.bottom
+        );
+        context.stroke();
+      }
+    );
+  }
+
+  context.restore();
+
+  drawReferenceLine(
+    context,
+    nominalPowerKW,
+    {
+      plot,
+      minimum: 0,
+      maximum:
+        maximumPowerKW,
+      color:
+        ACS_CHARTS_CONFIG
+          .COLORS
+          .generatorMaximum,
+      label:
+        `Potencia fija · ${formatNumber(
+          nominalPowerKW,
+          1
+        )} kW`
+    }
+  );
+
+  renderLegend(
+    [
+      {
+        label:
+          `Generador todo/nada · ${formatNumber(
+            nominalPowerKW,
+            1
+          )} kW`,
+        color:
+          ACS_CHARTS_CONFIG
+            .COLORS
+            .generatorPower
+      }
+    ],
     "power"
   );
 }
@@ -2584,8 +3392,13 @@ function render(
   view,
   chartData
 ) {
+  const normalizedChartData =
+    normalizeResultsChartData(
+      chartData
+    );
+
   validateChartData(
-    chartData
+    normalizedChartData
   );
 
   const allowedViews = [
@@ -2606,7 +3419,7 @@ function render(
     view;
 
   ACSChartsState.chartData =
-    chartData;
+    normalizedChartData;
 
   const {
     context,
@@ -2631,7 +3444,7 @@ function render(
     drawLoadChart(
       context,
       plot,
-      chartData
+      normalizedChartData
     );
 
     return;
@@ -2643,7 +3456,7 @@ function render(
     drawHourlyEnergyChart(
       context,
       plot,
-      chartData
+      normalizedChartData
     );
 
     return;
@@ -2652,7 +3465,7 @@ function render(
   drawPowerChart(
     context,
     plot,
-    chartData
+    normalizedChartData
   );
 }
 
@@ -2660,12 +3473,17 @@ function render(
 function renderAll(
   chartData
 ) {
+  const normalizedChartData =
+    normalizeResultsChartData(
+      chartData
+    );
+
   validateChartData(
-    chartData
+    normalizedChartData
   );
 
   ACSChartsState.chartData =
-    chartData;
+    normalizedChartData;
 
   [
     "load",
@@ -2675,7 +3493,7 @@ function renderAll(
     view => {
       render(
         view,
-        chartData
+        normalizedChartData
       );
     }
   );

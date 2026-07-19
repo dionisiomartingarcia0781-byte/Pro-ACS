@@ -705,6 +705,11 @@ function readProjectData() {
         "projectName"
       ).value.trim(),
 
+    client:
+      getElement(
+        "projectClient"
+      ).value.trim(),
+
     designer:
       getElement(
         "projectDesigner"
@@ -1750,6 +1755,31 @@ function buildSimulationConfig() {
         "generatorPowerKW"
       ),
 
+    generatorRampMinutes:
+      readNumber(
+        "generatorRampMinutes"
+      ),
+
+    minimumGeneratorStartIntervalMinutes:
+      readNumber(
+        "minimumGeneratorStartIntervalMinutes"
+      ),
+
+    hasSufficientGeneratorInertia:
+      getElement(
+        "hasSufficientGeneratorInertia"
+      ).checked,
+
+    generatorMinimumPowerKW:
+      readNumber(
+        "generatorMinimumPowerKW"
+      ),
+
+    maximumBelowMinimumPowerMinutes:
+      readNumber(
+        "maximumBelowMinimumPowerMinutes"
+      ),
+
     startThresholdPercent:
       readNumber(
         "startThresholdPercent"
@@ -1830,6 +1860,40 @@ function validateSimulationConfigBeforeEngine(
   ) {
     throw new Error(
       "La potencia del generador no puede ser negativa."
+    );
+  }
+
+  if (
+    config.generatorRampMinutes < 0
+  ) {
+    throw new Error(
+      "El tiempo de rampa del generador no puede ser negativo."
+    );
+  }
+
+  if (
+    config.minimumGeneratorStartIntervalMinutes < 0
+  ) {
+    throw new Error(
+      "El intervalo mínimo entre arranques no puede ser negativo."
+    );
+  }
+
+  if (
+    config.generatorMinimumPowerKW < 0 ||
+    config.generatorMinimumPowerKW >
+      config.generatorPowerKW
+  ) {
+    throw new Error(
+      "La potencia mínima debe estar entre 0 y la potencia nominal del generador."
+    );
+  }
+
+  if (
+    config.maximumBelowMinimumPowerMinutes < 0
+  ) {
+    throw new Error(
+      "El tiempo máximo bajo potencia mínima no puede ser negativo."
     );
   }
 
@@ -2918,16 +2982,31 @@ function requestGeneratePdf() {
  * Devuelve el estado que guardará project-storage.js.
  */
 function getSerializableAppState() {
+  /*
+   * Se leen siempre los formularios en el momento de guardar.
+   * Así no se reutiliza una configuración anterior si el usuario
+   * ha modificado datos después del último cálculo.
+   */
+  const currentProject =
+    readProjectData();
+
+  const currentInputs =
+    buildSimulationConfig();
+
+  ACSAppState.projectData =
+    currentProject;
+
+  ACSAppState.inputConfig =
+    currentInputs;
+
   return {
     version: "1.2.0",
 
     project:
-      ACSAppState.projectData ||
-      readProjectData(),
+      currentProject,
 
     inputs:
-      ACSAppState.inputConfig ||
-      null,
+      currentInputs,
 
     demandProfilePreview:
       ACSAppState.demandProfilePreview ||
@@ -3202,7 +3281,170 @@ function registerEventListeners() {
  * INICIALIZACIÓN
  * ============================================================ */
 
+function ensureGeneratorDynamicInputs() {
+  const generatorPowerInput =
+    document.getElementById("generatorPowerKW");
+
+  if (!generatorPowerInput) {
+    return;
+  }
+
+  const host =
+    generatorPowerInput.closest(
+      ".form-group, .field, .input-group, .control-group"
+    )?.parentElement ||
+    generatorPowerInput.parentElement?.parentElement ||
+    generatorPowerInput.parentElement;
+
+  if (!host) {
+    return;
+  }
+
+  const createNumberField = (
+    id,
+    labelText,
+    defaultValue,
+    helpText
+  ) => {
+    if (document.getElementById(id)) {
+      return document.getElementById(id).closest(
+        ".form-group, .field, .input-group, .control-group"
+      );
+    }
+
+    const wrapper = document.createElement("div");
+    wrapper.className =
+      generatorPowerInput.closest(
+        ".form-group, .field, .input-group, .control-group"
+      )?.className || "form-group";
+
+    const label = document.createElement("label");
+    label.htmlFor = id;
+    label.textContent = labelText;
+
+    const input = document.createElement("input");
+    input.type = "number";
+    input.id = id;
+    input.name = id;
+    input.min = "0";
+    input.step = "0.1";
+    input.value = String(defaultValue);
+
+    wrapper.append(label, input);
+
+    if (helpText) {
+      const help = document.createElement("small");
+      help.textContent = helpText;
+      wrapper.append(help);
+    }
+
+    host.appendChild(wrapper);
+
+    return wrapper;
+  };
+
+  createNumberField(
+    "generatorRampMinutes",
+    "Tiempo de rampa del generador (min)",
+    0,
+    "Tiempo para recorrer linealmente toda la potencia nominal."
+  );
+
+  createNumberField(
+    "minimumGeneratorStartIntervalMinutes",
+    "Intervalo mínimo entre arranques (min)",
+    0,
+    "Tiempo mínimo entre dos arranques consecutivos del generador."
+  );
+
+  let inertiaCheckbox =
+    document.getElementById(
+      "hasSufficientGeneratorInertia"
+    );
+
+  if (!inertiaCheckbox) {
+    const wrapper = document.createElement("div");
+    wrapper.className =
+      generatorPowerInput.closest(
+        ".form-group, .field, .input-group, .control-group"
+      )?.className || "form-group";
+
+    const label = document.createElement("label");
+    label.htmlFor =
+      "hasSufficientGeneratorInertia";
+
+    inertiaCheckbox =
+      document.createElement("input");
+    inertiaCheckbox.type = "checkbox";
+    inertiaCheckbox.id =
+      "hasSufficientGeneratorInertia";
+    inertiaCheckbox.name =
+      "hasSufficientGeneratorInertia";
+    inertiaCheckbox.checked = true;
+
+    label.append(
+      inertiaCheckbox,
+      document.createTextNode(
+        " Inercia suficiente en el circuito primario"
+      )
+    );
+
+    const help = document.createElement("small");
+    help.textContent =
+      "Si está marcada, se mantiene la adaptación energética actual del generador a los intercambiadores.";
+
+    wrapper.append(label, help);
+    host.appendChild(wrapper);
+  }
+
+  const minimumPowerWrapper =
+    createNumberField(
+      "generatorMinimumPowerKW",
+      "Potencia mínima del generador (kW)",
+      0,
+      "Sólo se aplica cuando la inercia no es suficiente."
+    );
+
+  const belowMinimumTimeWrapper =
+    createNumberField(
+      "maximumBelowMinimumPowerMinutes",
+      "Tiempo máximo bajo potencia mínima (min)",
+      5,
+      "Al agotarse, el generador se para; el siguiente arranque respeta el intervalo mínimo entre arranques."
+    );
+
+  const updateInertiaDependentFields = () => {
+    const sufficient = inertiaCheckbox.checked;
+
+    [
+      minimumPowerWrapper,
+      belowMinimumTimeWrapper
+    ].forEach(wrapper => {
+      if (!wrapper) {
+        return;
+      }
+
+      wrapper.hidden = sufficient;
+
+      const input = wrapper.querySelector("input");
+      if (input) {
+        input.disabled = false;
+      }
+    });
+  };
+
+  inertiaCheckbox.addEventListener(
+    "change",
+    updateInertiaDependentFields
+  );
+
+  updateInertiaDependentFields();
+}
+
+
 function initializeApplication() {
+  ensureGeneratorDynamicInputs();
+
   cacheDOMElements();
 
   registerEventListeners();

@@ -262,6 +262,26 @@
       text-align: left;
     }
 
+    .stepper--five-tabs {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+
+    .technical-tab-panel[hidden] {
+      display: none !important;
+    }
+
+    @media (max-width: 1050px) {
+      .stepper--five-tabs {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 620px) {
+      .stepper--five-tabs {
+        grid-template-columns: 1fr;
+      }
+    }
+
   </style>
 
 </head>
@@ -327,7 +347,7 @@
          ===================================================== -->
 
     <nav
-      class="stepper"
+      class="stepper stepper--five-tabs"
       aria-label="Progreso del proyecto"
     >
       <button
@@ -340,7 +360,7 @@
         <span class="stepper__number">1</span>
 
         <span class="stepper__content">
-          <strong>Proyecto</strong>
+          <strong>Datos generales</strong>
           <small>Datos generales</small>
         </span>
       </button>
@@ -354,8 +374,36 @@
         <span class="stepper__number">2</span>
 
         <span class="stepper__content">
-          <strong>Datos técnicos</strong>
-          <small>Configuración de cálculo</small>
+          <strong>Demanda de ACS</strong>
+          <small>Demanda y perfil horario</small>
+        </span>
+      </button>
+
+      <button
+        id="stepStorageButton"
+        type="button"
+        class="stepper__item"
+        data-screen="storage"
+      >
+        <span class="stepper__number">3</span>
+
+        <span class="stepper__content">
+          <strong>Depósitos y temperatura</strong>
+          <small>Acumulación y temperaturas</small>
+        </span>
+      </button>
+
+      <button
+        id="stepGeneratorButton"
+        type="button"
+        class="stepper__item"
+        data-screen="generator"
+      >
+        <span class="stepper__number">4</span>
+
+        <span class="stepper__content">
+          <strong>Generador</strong>
+          <small>Generación y control</small>
         </span>
       </button>
 
@@ -366,7 +414,7 @@
         data-screen="results"
         disabled
       >
-        <span class="stepper__number">3</span>
+        <span class="stepper__number">5</span>
 
         <span class="stepper__content">
           <strong>Resultados</strong>
@@ -407,7 +455,7 @@
         <div class="screen__header">
           <div>
             <p class="screen__eyebrow">
-              Paso 1 de 3
+              Pestaña 1 de 5
             </p>
 
             <h2 class="screen__title">
@@ -444,6 +492,24 @@
 
               <small class="form-field__help">
                 Nombre identificativo del estudio o instalación.
+              </small>
+            </div>
+
+            <div class="form-field form-field--full">
+              <label for="projectClient">
+                Cliente
+              </label>
+
+              <input
+                id="projectClient"
+                name="projectClient"
+                type="text"
+                autocomplete="organization"
+                maxlength="150"
+              >
+
+              <small class="form-field__help">
+                Cliente o entidad para quien se realiza el proyecto.
               </small>
             </div>
 
@@ -551,16 +617,15 @@
         <div class="screen__header">
           <div>
             <p class="screen__eyebrow">
-              Paso 2 de 3
+              <span id="technicalTabEyebrow">Pestaña 2 de 5</span>
             </p>
 
-            <h2 class="screen__title">
-              Datos técnicos de la instalación
+            <h2 id="technicalTabTitle" class="screen__title">
+              Demanda de ACS
             </h2>
 
-            <p class="screen__description">
-              Introduce la demanda, la configuración hidráulica,
-              la acumulación y los equipos de generación.
+            <p id="technicalTabDescription" class="screen__description">
+              Define la demanda diaria y su distribución temporal.
             </p>
           </div>
         </div>
@@ -572,7 +637,7 @@
 
           <!-- DEMANDA -->
 
-          <section class="form-card">
+          <section class="form-card technical-tab-panel" data-technical-tab="demand">
             <div class="form-card__header">
               <div>
                 <h3>Demanda de ACS</h3>
@@ -824,7 +889,7 @@
 
           <!-- TEMPERATURAS Y RECIRCULACIÓN -->
 
-          <section class="form-card">
+          <section class="form-card technical-tab-panel" data-technical-tab="storage" hidden>
             <div class="form-card__header">
               <div>
                 <h3>Temperaturas y recirculación</h3>
@@ -927,7 +992,7 @@
 
           <!-- DEPÓSITOS -->
 
-          <section class="form-card">
+          <section class="form-card technical-tab-panel" data-technical-tab="storage" hidden>
             <div class="form-card__header">
               <div>
                 <h3>Acumulación</h3>
@@ -1390,7 +1455,7 @@
 
           <!-- GENERADOR Y CONTROL -->
 
-          <section class="form-card">
+          <section class="form-card technical-tab-panel" data-technical-tab="generator" hidden>
             <div class="form-card__header">
               <div>
                 <h3>Generador y control</h3>
@@ -1467,7 +1532,7 @@
 
           <!-- ACCIONES PANTALLA 2 -->
 
-          <div class="screen-actions">
+          <div id="technicalScreenActions" class="screen-actions">
             <button
               id="backToProjectButton"
               type="button"
@@ -1512,7 +1577,7 @@
         <div class="screen__header">
           <div>
             <p class="screen__eyebrow">
-              Paso 3 de 3
+              Pestaña 5 de 5
             </p>
 
             <h2 class="screen__title">
@@ -1932,6 +1997,143 @@
 
   <!-- Control general de la aplicación -->
   <script src="./js/app.js"></script>
+
+  <!-- Navegación visual en cinco pestañas -->
+  <script>
+    (() => {
+      const projectScreen = document.getElementById("projectScreen");
+      const inputsScreen = document.getElementById("inputsScreen");
+      const resultsScreen = document.getElementById("resultsScreen");
+      const projectButton = document.getElementById("stepProjectButton");
+      const demandButton = document.getElementById("stepInputsButton");
+      const storageButton = document.getElementById("stepStorageButton");
+      const generatorButton = document.getElementById("stepGeneratorButton");
+      const resultsButton = document.getElementById("stepResultsButton");
+      const technicalTitle = document.getElementById("technicalTabTitle");
+      const technicalEyebrow = document.getElementById("technicalTabEyebrow");
+      const technicalDescription = document.getElementById(
+        "technicalTabDescription"
+      );
+      const technicalPanels = Array.from(
+        document.querySelectorAll("[data-technical-tab]")
+      );
+
+      const buttons = {
+        project: projectButton,
+        demand: demandButton,
+        storage: storageButton,
+        generator: generatorButton,
+        results: resultsButton
+      };
+
+      const technicalContent = {
+        demand: {
+          eyebrow: "Pestaña 2 de 5",
+          title: "Demanda de ACS",
+          description: "Define la demanda diaria y su distribución temporal."
+        },
+        storage: {
+          eyebrow: "Pestaña 3 de 5",
+          title: "Depósitos y temperatura",
+          description:
+            "Configura las temperaturas, la recirculación y la acumulación."
+        },
+        generator: {
+          eyebrow: "Pestaña 4 de 5",
+          title: "Generador",
+          description: "Configura la generación y sus criterios de control."
+        }
+      };
+
+      function setActiveButton(tabName) {
+        Object.entries(buttons).forEach(([name, button]) => {
+          if (!button) {
+            return;
+          }
+
+          const isActive = name === tabName;
+          button.classList.toggle("stepper__item--active", isActive);
+
+          if (isActive) {
+            button.setAttribute("aria-current", "step");
+          } else {
+            button.removeAttribute("aria-current");
+          }
+        });
+      }
+
+      function showTechnicalTab(tabName) {
+        const content = technicalContent[tabName];
+
+        if (!content) {
+          return;
+        }
+
+        projectScreen.hidden = true;
+        projectScreen.classList.remove("screen--active");
+        resultsScreen.hidden = true;
+        resultsScreen.classList.remove("screen--active");
+        inputsScreen.hidden = false;
+        inputsScreen.classList.add("screen--active");
+
+        technicalPanels.forEach((panel) => {
+          panel.hidden = panel.dataset.technicalTab !== tabName;
+        });
+
+        technicalEyebrow.textContent = content.eyebrow;
+        technicalTitle.textContent = content.title;
+        technicalDescription.textContent = content.description;
+        setActiveButton(tabName);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+
+      storageButton.addEventListener("click", () => {
+        showTechnicalTab("storage");
+      });
+
+      generatorButton.addEventListener("click", () => {
+        showTechnicalTab("generator");
+      });
+
+      demandButton.addEventListener("click", () => {
+        showTechnicalTab("demand");
+      });
+
+      projectButton.addEventListener("click", () => {
+        setActiveButton("project");
+      });
+
+      resultsButton.addEventListener("click", () => {
+        setActiveButton("results");
+      });
+
+      document
+        .getElementById("projectForm")
+        .addEventListener("submit", () => {
+          window.setTimeout(() => {
+            if (!inputsScreen.hidden) {
+              showTechnicalTab("demand");
+            }
+          }, 0);
+        });
+
+      document
+        .getElementById("simulationForm")
+        .addEventListener("submit", () => {
+          window.setTimeout(() => {
+            if (!resultsScreen.hidden) {
+              setActiveButton("results");
+            }
+          }, 0);
+        });
+
+      document
+        .getElementById("backToInputsButton")
+        .addEventListener("click", () => {
+          window.setTimeout(() => showTechnicalTab("generator"), 0);
+        });
+    })();
+  </script>
 
 
   <script>

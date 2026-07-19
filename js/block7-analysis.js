@@ -448,6 +448,12 @@ function getSimulationContext(
         .analysis
         .minute || [],
 
+    generatorOperation:
+      simulation
+        .results
+        .analysis
+        .generatorOperation || null,
+
     totals:
       simulation
         .results
@@ -1608,6 +1614,176 @@ function createGeneralResults(
  * ============================================================ */
 
 /**
+ * Calcula directamente sobre todos los pasos de minuto del periodo
+ * analizado los indicadores usados por las valoraciones.
+ *
+ * Los resultados horarios se reservan para tablas y resúmenes; no
+ * intervienen en la decisión sanitaria ni en la de confort.
+ */
+function createContinuousAssessmentMetrics(
+  context
+) {
+  const minutes =
+    Array.isArray(context.minutes)
+      ? context.minutes
+      : [];
+
+  if (minutes.length === 0) {
+    throw new ACSBlock7Error(
+      "Las valoraciones continuas requieren los resultados por minuto del periodo analizado."
+    );
+  }
+
+  const requestedDemandEnergyKWh =
+    sumNumbers(
+      minutes.map(
+        minute =>
+          finiteOrFallback(
+            minute.energies
+              ?.requestedDemandEnergyKWh,
+            0
+          )
+      )
+    );
+
+  const coveredDemandEnergyKWh =
+    sumNumbers(
+      minutes.map(
+        minute =>
+          finiteOrFallback(
+            minute.energies
+              ?.coveredDemandEnergyKWh,
+            0
+          )
+      )
+    );
+
+  const uncoveredDemandEnergyKWh =
+    sumNumbers(
+      minutes.map(
+        minute =>
+          finiteOrFallback(
+            minute.energies
+              ?.uncoveredDemandEnergyKWh,
+            0
+          )
+      )
+    );
+
+  const uncoveredEquivalentVolumeL =
+    sumNumbers(
+      minutes.map(
+        minute =>
+          finiteOrFallback(
+            minute.comfort
+              ?.uncoveredEquivalentVolumeL,
+            0
+          )
+      )
+    );
+
+  const actualUseTemperatures =
+    minutes
+      .map(
+        minute =>
+          minute.comfort
+            ?.actualUseTemperatureC
+      )
+      .filter(isFiniteNumber);
+
+  const sanitaryTemperatures =
+    minutes
+      .map(
+        minute =>
+          minute.sanitary
+            ?.temperatureC
+      )
+      .filter(isFiniteNumber);
+
+  const sanitaryMinutesBelowThreshold =
+    sumNumbers(
+      minutes.map(
+        minute =>
+          finiteOrFallback(
+            minute.sanitary
+              ?.minutesBelow60C,
+            0
+          )
+      )
+    );
+
+  const firstSanitaryMinute =
+    minutes.find(
+      minute =>
+        minute.sanitary
+          ?.enabled
+    );
+
+  return {
+    resolutionMinutes:
+      finiteOrFallback(
+        context.metadata
+          ?.intervalMinutes,
+        1
+      ),
+
+    evaluatedMinuteCount:
+      minutes.length,
+
+    comfort: {
+      requestedDemandEnergyKWh,
+      coveredDemandEnergyKWh,
+      uncoveredDemandEnergyKWh,
+      uncoveredEquivalentVolumeL,
+
+      coveragePercent:
+        requestedDemandEnergyKWh >
+        ACS_BLOCK7_CONSTANTS
+          .ENERGY_EPSILON_KWH
+          ? clamp(
+              coveredDemandEnergyKWh /
+                requestedDemandEnergyKWh *
+                100,
+              0,
+              100
+            )
+          : 100,
+
+      minutesBelowTargetTemperature:
+        minutes.filter(
+          minute =>
+            minute.comfort
+              ?.targetTemperatureReached ===
+            false
+        ).length,
+
+      minimumActualUseTemperatureC:
+        minimumNumber(
+          actualUseTemperatures,
+          null
+        )
+    },
+
+    sanitary: {
+      evaluatedTankId:
+        firstSanitaryMinute
+          ?.sanitary
+          ?.evaluatedTankId ||
+        null,
+
+      minutesBelowThreshold:
+        sanitaryMinutesBelowThreshold,
+
+      minimumTemperatureC:
+        minimumNumber(
+          sanitaryTemperatures,
+          null
+        )
+    }
+  };
+}
+
+/**
  * Crea la valoración sanitaria opcional.
  *
  * Cumple:
@@ -1617,9 +1793,6 @@ function createGeneralResults(
 function createSanitaryAssessment(
   context
 ) {
-  const sanitary =
-    context.totals.sanitary;
-
   const enabled =
     Boolean(
       context.config
@@ -1668,9 +1841,17 @@ function createSanitaryAssessment(
     };
   }
 
+  const continuous =
+    createContinuousAssessmentMetrics(
+      context
+    );
+
+  const sanitary =
+    continuous.sanitary;
+
   const minutesBelowThreshold =
     finiteOrFallback(
-      sanitary.minutesBelow60C,
+      sanitary.minutesBelowThreshold,
       0
     );
 
@@ -1707,6 +1888,15 @@ function createSanitaryAssessment(
       sanitary
         .evaluatedTankId,
 
+    evaluationResolutionMinutes:
+      continuous.resolutionMinutes,
+
+    evaluatedMinuteCount:
+      continuous.evaluatedMinuteCount,
+
+    minimumTemperatureC:
+      sanitary.minimumTemperatureC,
+
     thresholdTemperatureC:
       ACS_BLOCK7_CONSTANTS
         .SANITARY_TEMPERATURE_C,
@@ -1720,13 +1910,13 @@ function createSanitaryAssessment(
     message:
       compliant
         ? (
-            `El depósito de suministro ha permanecido ${formatNumber(
+            `La evaluación continua minuto a minuto indica que el depósito de suministro ha permanecido ${formatNumber(
               minutesBelowThreshold,
               0
             )} minutos por debajo de 60 °C, dentro del máximo definido de 30 minutos.`
           )
         : (
-            `El depósito de suministro ha permanecido ${formatNumber(
+            `La evaluación continua minuto a minuto indica que el depósito de suministro ha permanecido ${formatNumber(
               minutesBelowThreshold,
               0
             )} minutos por debajo de 60 °C, superando el máximo definido de 30 minutos.`
@@ -1775,18 +1965,17 @@ function createComfortAssessment(
   context,
   tanks
 ) {
-  const energy =
-    context.totals.energy;
+  const continuous =
+    createContinuousAssessmentMetrics(
+      context
+    );
 
   const comfort =
-    context.totals.comfort;
-
-  const volume =
-    context.totals.volume;
+    continuous.comfort;
 
   const deficitKWh =
     finiteOrFallback(
-      energy
+      comfort
         .uncoveredDemandEnergyKWh,
       0
     );
@@ -1827,10 +2016,18 @@ function createComfortAssessment(
     supplyTank.tankId;
 
   const supplyTankMinimumLoadPercent =
-    finiteOrFallback(
-      supplyTank
-        .minimumLoadPercent,
-      0
+    minimumNumber(
+      context.minutes.map(
+        minute =>
+          minute.finalTankStates
+            ?.[supplyTankIndex]
+            ?.loadPercent
+      ),
+      finiteOrFallback(
+        supplyTank
+          .minimumLoadPercent,
+        0
+      )
     );
 
   let status;
@@ -1860,7 +2057,7 @@ function createComfortAssessment(
         deficitKWh,
         2
       )} kWh, equivalente a ${formatNumber(
-        volume
+        comfort
           .uncoveredEquivalentVolumeL,
         1
       )} litros de ACS a la temperatura de uso definida.`;
@@ -1946,6 +2143,12 @@ function createComfortAssessment(
 
     evaluatedTankId,
 
+    evaluationResolutionMinutes:
+      continuous.resolutionMinutes,
+
+    evaluatedMinuteCount:
+      continuous.evaluatedMinuteCount,
+
     hasDeficit,
 
     deficitKWh,
@@ -1955,7 +2158,7 @@ function createComfortAssessment(
         .coveragePercent,
 
     uncoveredEquivalentVolumeL:
-      volume
+      comfort
         .uncoveredEquivalentVolumeL,
 
     minutesBelowTargetTemperature:
@@ -2270,15 +2473,84 @@ function createChartData(
       );
   }
 
+  const generatorOperatingIntervals =
+    Array.isArray(
+      context.generatorOperation
+        ?.intervals
+    )
+      ? context.generatorOperation
+          .intervals
+          .map(
+            interval => ({
+              ...interval
+            })
+          )
+      : [];
+
+  const generatorPowerSegments =
+    Array.isArray(
+      context.generatorOperation
+        ?.powerSegments
+    )
+      ? context.generatorOperation
+          .powerSegments
+          .map(
+            segment => ({
+              startMinute:
+                finiteOrFallback(
+                  segment.startMinute,
+                  0
+                ),
+
+              endMinute:
+                finiteOrFallback(
+                  segment.endMinute,
+                  0
+                ),
+
+              totalPowerKW:
+                finiteOrFallback(
+                  segment.totalPowerKW,
+                  0
+                ),
+
+              tankPowersKW:
+                Array.isArray(
+                  segment.tankPowersKW
+                )
+                  ? segment
+                      .tankPowersKW
+                      .map(
+                        value =>
+                          finiteOrFallback(
+                            value,
+                            0
+                          )
+                      )
+                  : []
+            })
+          )
+      : [];
+
+  /*
+   * Serie media por minuto, mantenida por compatibilidad.
+   * La gráfica de potencia usa generatorPowerSegments para conservar
+   * los cambios continuos de asignación entre intercambiadores.
+   */
   const generatorPowerKW =
     minutes.map(
       minute =>
         finiteOrFallback(
           minute
             .generation
-            .absorbedEnergyKWh,
-          0
-        ) * 60
+            ?.effectivePowerKW,
+          finiteOrFallback(
+            minute
+              .generation
+              ?.generatorPowerKW,
+            0
+          )
+        )
     );
 
   const totalDeliveredEnergyKWh =
@@ -2308,6 +2580,14 @@ function createChartData(
 
     energy: {
       generatorPowerKW,
+
+      generatorOperatingIntervals,
+
+      generatorPowerSegments,
+
+      generatorHourlyOperation:
+        context.generatorOperation
+          ?.hourly || [],
 
       generatorMaximumPowerKW:
         finiteOrFallback(

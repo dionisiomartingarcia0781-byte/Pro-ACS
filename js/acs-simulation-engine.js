@@ -2201,6 +2201,58 @@ function normalizeSimulationConfig(
       "generatorPowerKW"
     );
 
+  const generatorRampMinutes =
+    inputConfig.generatorRampMinutes === undefined
+      ? 0
+      : requireNonNegativeNumber(
+          inputConfig.generatorRampMinutes,
+          "generatorRampMinutes"
+        );
+
+  const minimumGeneratorStartIntervalMinutes =
+    inputConfig.minimumGeneratorStartIntervalMinutes === undefined
+      ? 0
+      : requireNonNegativeNumber(
+          inputConfig.minimumGeneratorStartIntervalMinutes,
+          "minimumGeneratorStartIntervalMinutes"
+        );
+
+  const hasSufficientGeneratorInertia =
+    inputConfig.hasSufficientGeneratorInertia === undefined
+      ? true
+      : Boolean(
+          inputConfig.hasSufficientGeneratorInertia
+        );
+
+  const generatorMinimumPowerKW =
+    inputConfig.generatorMinimumPowerKW === undefined
+      ? 0
+      : requireNonNegativeNumber(
+          inputConfig.generatorMinimumPowerKW,
+          "generatorMinimumPowerKW"
+        );
+
+  const maximumBelowMinimumPowerMinutes =
+    inputConfig.maximumBelowMinimumPowerMinutes === undefined
+      ? 0
+      : requireNonNegativeNumber(
+          inputConfig.maximumBelowMinimumPowerMinutes,
+          "maximumBelowMinimumPowerMinutes"
+        );
+
+  if (
+    generatorMinimumPowerKW >
+    generatorPowerKW
+  ) {
+    throw new ACSSimulationError(
+      "La potencia mínima del generador no puede superar su potencia nominal.",
+      {
+        generatorMinimumPowerKW,
+        generatorPowerKW
+      }
+    );
+  }
+
   const startThresholdPercent =
     requireNumberInRange(
       inputConfig.startThresholdPercent,
@@ -2401,6 +2453,11 @@ function normalizeSimulationConfig(
     tanks,
 
     generatorPowerKW,
+    generatorRampMinutes,
+    minimumGeneratorStartIntervalMinutes,
+    hasSufficientGeneratorInertia,
+    generatorMinimumPowerKW,
+    maximumBelowMinimumPowerMinutes,
     startThresholdPercent,
 
     storageTemperatureC,
@@ -3340,6 +3397,7 @@ function calculateDemandCoverage(params) {
  * @param {object} params
  * @param {number} params.equivalentDemandVolumeL
  * @param {number} params.hotWaterTemperatureC
+ * @param {number} params.storageTemperatureC Temperatura de acumulación usada para dimensionar el retorno por depósitos.
  * @param {number} params.useTemperatureC
  * @param {number} params.networkTemperatureC
  * @param {number} params.recirculationFlowLPerMinute Caudal derivado de las pérdidas objetivo.
@@ -3365,6 +3423,7 @@ function calculateMinuteHydraulics(
   const {
     equivalentDemandVolumeL,
     hotWaterTemperatureC,
+    storageTemperatureC,
     useTemperatureC,
     networkTemperatureC,
     recirculationFlowLPerMinute,
@@ -3379,6 +3438,11 @@ function calculateMinuteHydraulics(
   requireFiniteNumber(
     hotWaterTemperatureC,
     "hotWaterTemperatureC"
+  );
+
+  requireFiniteNumber(
+    storageTemperatureC,
+    "storageTemperatureC"
   );
 
   requireFiniteNumber(
@@ -3470,7 +3534,13 @@ function calculateMinuteHydraulics(
       totalRecirculationVolumeL:
         recirculationVolumeL,
 
-      hotWaterTemperatureC,
+      /*
+       * El retorno que atraviesa los depósitos se calcula con Tacum.
+       * No depende de la temperatura instantánea de salida, que sólo
+       * afecta después a la entrega real y al balance energético.
+       */
+      hotWaterTemperatureC:
+        storageTemperatureC,
 
       supplyTemperatureC:
         mixing.actualUseTemperatureC,
@@ -3619,6 +3689,12 @@ class ACSMinuteHydraulicState {
         "hotWaterTemperatureC"
       );
 
+    this.storageTemperatureC =
+      requireFiniteNumber(
+        config.storageTemperatureC,
+        "storageTemperatureC"
+      );
+
     this.useTemperatureC =
       requireFiniteNumber(
         config.useTemperatureC,
@@ -3663,6 +3739,9 @@ class ACSMinuteHydraulicState {
 
         hotWaterTemperatureC:
           this.hotWaterTemperatureC,
+
+        storageTemperatureC:
+          this.storageTemperatureC,
 
         useTemperatureC:
           this.useTemperatureC,
@@ -3739,6 +3818,9 @@ class ACSMinuteHydraulicState {
 
       hotWaterTemperatureC:
         this.hotWaterTemperatureC,
+
+      storageTemperatureC:
+        this.storageTemperatureC,
 
       useTemperatureC:
         this.useTemperatureC,
@@ -3839,6 +3921,9 @@ function createMinuteHydraulicState(
 
     hotWaterTemperatureC:
       tankOutletTemperatureC,
+
+    storageTemperatureC:
+      config.storageTemperatureC,
 
     useTemperatureC:
       config.useTemperatureC,
@@ -5314,6 +5399,19 @@ class ACSGeneratorState {
 
     this.lastStartMinute = null;
     this.lastStopMinute = null;
+
+    /* Potencia térmica efectiva al final del último subintervalo. */
+    this.currentPowerKW = 0;
+
+    /*
+     * Tiempo consecutivo durante el cual el generador ha trabajado por
+     * debajo de su potencia mínima estable cuando no existe inercia
+     * suficiente. Se integra con la misma resolución subminuto que el
+     * balance energético.
+     */
+    this.belowMinimumPowerMinutes = 0;
+
+    this.minimumPowerForcedStopCount = 0;
   }
 
   /**
@@ -5341,6 +5439,15 @@ class ACSGeneratorState {
     copy.lastStopMinute =
       this.lastStopMinute;
 
+    copy.currentPowerKW =
+      this.currentPowerKW;
+
+    copy.belowMinimumPowerMinutes =
+      this.belowMinimumPowerMinutes;
+
+    copy.minimumPowerForcedStopCount =
+      this.minimumPowerForcedStopCount;
+
     return copy;
   }
 
@@ -5365,7 +5472,16 @@ class ACSGeneratorState {
         this.lastStartMinute,
 
       lastStopMinute:
-        this.lastStopMinute
+        this.lastStopMinute,
+
+      currentPowerKW:
+        this.currentPowerKW,
+
+      belowMinimumPowerMinutes:
+        this.belowMinimumPowerMinutes,
+
+      minimumPowerForcedStopCount:
+        this.minimumPowerForcedStopCount
     };
   }
 }
@@ -5435,7 +5551,9 @@ function updateGeneratorControlAtMinuteStart(
 
   const allTanksFull =
     tanks.every(
-      tank => tank.isFull
+      tank =>
+        tank.isFull ||
+        tank.loadPercent >= 99.999
     );
 
   let nextRunning =
@@ -5445,14 +5563,35 @@ function updateGeneratorControlAtMinuteStart(
     "Estado mantenido.";
 
   if (!previousRunning) {
+    const minimumStartIntervalMinutes =
+      Math.max(
+        0,
+        Number(
+          config.minimumGeneratorStartIntervalMinutes || 0
+        )
+      );
+
+    const startIntervalSatisfied =
+      generatorState.lastStartMinute === null ||
+      minuteIndex - generatorState.lastStartMinute >=
+        minimumStartIntervalMinutes;
+
     if (
       anyTankBelowThreshold &&
-      config.generatorPowerKW > 0
+      config.generatorPowerKW > 0 &&
+      startIntervalSatisfied
     ) {
       nextRunning = true;
 
       reason =
         "Arranque por depósito bajo el umbral.";
+    } else if (
+      anyTankBelowThreshold &&
+      config.generatorPowerKW > 0 &&
+      !startIntervalSatisfied
+    ) {
+      reason =
+        "Arranque bloqueado por intervalo mínimo entre arranques.";
     }
   } else if (allTanksFull) {
     nextRunning = false;
@@ -5477,6 +5616,8 @@ function updateGeneratorControlAtMinuteStart(
 
     generatorState.lastStartMinute =
       minuteIndex;
+
+    generatorState.belowMinimumPowerMinutes = 0;
   }
 
   if (stopped) {
@@ -5484,6 +5625,9 @@ function updateGeneratorControlAtMinuteStart(
 
     generatorState.lastStopMinute =
       minuteIndex;
+
+    generatorState.currentPowerKW = 0;
+    generatorState.belowMinimumPowerMinutes = 0;
   }
 
   return {
@@ -5505,11 +5649,13 @@ function updateGeneratorControlAtMinuteStart(
  *   - Potencia efectiva del intercambiador.
  *   - Potencia absorbible antes de llenarse.
  *
- * Dos depósitos:
- * - Prioridad estricta para D2.
- * - D2 recibe primero toda la potencia posible.
- * - El resto se asigna a D1.
- * - No existe reparto proporcional.
+ * Dos depósitos en paralelo:
+ * - D2 conserva prioridad sobre D1.
+ * - Cuando D1 está calentando, D2 modula de forma instantánea para cubrir
+ *   su extracción hidráulica y recuperar hasta Tacum.
+ * - D1 recibe después la potencia restante y mantiene control todo/nada.
+ * - Cuando D1 no está calentando, D2 conserva el control todo/nada existente.
+ * - No se reconstruyen potencias medias para la cronología.
  *
  * La potencia efectiva del intercambiador se consulta en el instante
  * anterior a la carga del minuto. Para serpentines depende de:
@@ -5525,7 +5671,14 @@ function applyGeneratorForMinute(
     config,
     tanks,
     generatorState,
-    intervalMinutes = 1
+    intervalMinutes = 1,
+
+    /**
+     * Energía extraída hidráulicamente de cada depósito durante este mismo
+     * subintervalo. Sólo se utiliza para el control modulante explícito de
+     * D2 cuando D1 está calentando.
+     */
+    hydraulicExtractedEnergyKWhByTank = null
   } = params;
 
   if (
@@ -5557,6 +5710,23 @@ function applyGeneratorForMinute(
     "intervalMinutes"
   );
 
+  const hydraulicExtractionByTank =
+    Array.isArray(
+      hydraulicExtractedEnergyKWhByTank
+    )
+      ? tanks.map(
+          (tank, tankIndex) =>
+            Math.max(
+              0,
+              Number(
+                hydraulicExtractedEnergyKWhByTank[
+                  tankIndex
+                ] || 0
+              )
+            )
+        )
+      : tanks.map(() => 0);
+
   /**
    * Diagnóstico previo a la aplicación de potencia.
    *
@@ -5575,11 +5745,27 @@ function applyGeneratorForMinute(
     !generatorState.running ||
     config.generatorPowerKW <= 0
   ) {
+    generatorState.currentPowerKW = 0;
+    generatorState.belowMinimumPowerMinutes = 0;
+
     return {
       generatorRunning: false,
+      generatorDemandActive: false,
 
-      generatorPowerKW:
+      nominalGeneratorPowerKW:
         config.generatorPowerKW,
+
+      generatorPowerKW: 0,
+      effectivePowerKW: 0,
+
+      hasSufficientGeneratorInertia:
+        config.hasSufficientGeneratorInertia,
+      generatorMinimumPowerKW:
+        config.generatorMinimumPowerKW,
+      maximumBelowMinimumPowerMinutes:
+        config.maximumBelowMinimumPowerMinutes,
+      belowMinimumPowerMinutes: 0,
+      minimumPowerStopRequired: false,
 
       requestedEnergyKWh: 0,
       absorbedEnergyKWh: 0,
@@ -5640,14 +5826,55 @@ function applyGeneratorForMinute(
     };
   }
 
-  const requestedEnergyKWh =
-    powerToEnergy(
-      config.generatorPowerKW,
-      intervalMinutes
+  /* Se completa después de calcular la potencia disponible por rampa. */
+  let requestedEnergyKWh = 0;
+
+  const rampMinutes =
+    Math.max(
+      0,
+      Number(
+        config.generatorRampMinutes || 0
+      )
     );
 
+  const previousGeneratorPowerKW =
+    Math.max(
+      0,
+      Number(
+        generatorState.currentPowerKW || 0
+      )
+    );
+
+  /*
+   * La rampa limita la velocidad de subida desde la potencia efectiva
+   * actual hacia el siguiente estado solicitado. La reducción de potencia
+   * sigue inmediatamente a la capacidad real de absorción para no crear
+   * energía sobrante ni modificar el balance existente.
+   */
+  const maximumPowerIncreaseKW =
+    rampMinutes > 0
+      ? config.generatorPowerKW *
+        intervalMinutes /
+        rampMinutes
+      : config.generatorPowerKW;
+
+  const rampLimitedGeneratorPowerKW =
+    rampMinutes > 0
+      ? Math.min(
+          config.generatorPowerKW,
+          previousGeneratorPowerKW +
+            maximumPowerIncreaseKW
+        )
+      : config.generatorPowerKW;
+
   let remainingPowerKW =
-    config.generatorPowerKW;
+    rampLimitedGeneratorPowerKW;
+
+  requestedEnergyKWh =
+    powerToEnergy(
+      rampLimitedGeneratorPowerKW,
+      intervalMinutes
+    );
 
   /**
    * Un depósito:
@@ -5681,6 +5908,23 @@ function applyGeneratorForMinute(
   const temporaryResults =
     new Array(tanks.length);
 
+  /**
+   * En la arquitectura de dos depósitos, D1 continúa siendo todo/nada.
+   * Se considera que D1 está calentando cuando, durante este subintervalo,
+   * necesita recuperar energía hasta Tacum después de considerar la
+   * extracción hidráulica simultánea.
+   *
+   * Esta condición habilita el control modulante de D2. En la arquitectura
+   * de un solo depósito no se evalúa ni se modifica esta lógica.
+   */
+  const d1HeatingActive =
+    config.tankCount === 2 &&
+    tanks.length >= 2 &&
+    (
+      tanks[0].remainingCapacityKWh +
+      hydraulicExtractionByTank[0]
+    ) > ACS_CONSTANTS.DEFAULT_CONVERGENCE_TOLERANCE;
+
   priorityOrder.forEach(
     item => {
       const {
@@ -5697,27 +5941,98 @@ function applyGeneratorForMinute(
         );
 
       /**
-       * Esta función ya incorpora:
-       * - límite de capacidad restante;
-       * - potencia nominal para placas;
-       * - potencia corregida para serpentines.
+       * `maximumAbsorbablePowerKW` se conserva como diagnóstico energético:
+       * expresa la potencia media equivalente que llenaría exactamente la
+       * capacidad restante durante todo el intervalo.
+       *
+       * No debe utilizarse como potencia instantánea, porque eso convertiría
+       * una parada parcial del intercambiador en una modulación artificial.
        */
       const maximumAbsorbablePowerKW =
         tank.getMaximumAbsorbablePowerKW(
           intervalMinutes
         );
 
+      let controlExchangerDiagnostic =
+        initialExchangerDiagnostic;
+
+      const isD2 =
+        config.tankCount === 2 &&
+        originalIndex === 1;
+
+      /**
+       * D2 modulante en paralelo:
+       *
+       * Cuando D1 está calentando, D2 tiene prioridad y recibe únicamente la
+       * potencia instantánea necesaria para:
+       * - compensar la energía que consumo y pérdidas extraen de D2 durante
+       *   este mismo subintervalo;
+       * - recuperar cualquier déficit previo hasta Tacum;
+       * - sin superar la potencia efectiva de su intercambiador ni la
+       *   potencia disponible del generador.
+       *
+       * La extracción hidráulica se aplica virtualmente a la copia de D2
+       * antes de cargarla. Esto crea la capacidad real que D2 debe compensar
+       * en el balance simultáneo y permite que `applyPower()` registre esa
+       * potencia como un estado instantáneo continuo, no como una media
+       * reconstruida para la gráfica.
+       */
+      const d2Modulating =
+        isD2 && d1HeatingActive;
+
+      if (d2Modulating) {
+        const simultaneousExtractionKWh =
+          hydraulicExtractionByTank[
+            originalIndex
+          ];
+
+        if (simultaneousExtractionKWh > 0) {
+          tank.extractEnergy(
+            simultaneousExtractionKWh
+          );
+
+          /**
+           * En serpentines, la extracción simultánea puede modificar la
+           * corrección térmica. La potencia disponible se vuelve a evaluar
+           * sobre el estado instantáneo que realmente debe recuperar D2.
+           */
+          controlExchangerDiagnostic =
+            getTankExchangerDiagnostic(
+              tank
+            );
+        }
+      }
+
+      const availableExchangerPowerKW =
+        Math.max(
+          0,
+          controlExchangerDiagnostic
+            ?.effectiveExchangerPowerKW || 0
+        );
+
+      const instantaneousRequiredPowerKW =
+        d2Modulating
+          ? (
+              tank.remainingCapacityKWh *
+              ACS_CONSTANTS.MINUTES_PER_HOUR /
+              intervalMinutes
+            )
+          : availableExchangerPowerKW;
+
       const assignedPowerKW =
         Math.min(
           remainingPowerKW,
-          maximumAbsorbablePowerKW
+          availableExchangerPowerKW,
+          Math.max(
+            0,
+            instantaneousRequiredPowerKW
+          )
         );
 
       /**
-       * La potencia se reserva al inicio.
-       *
-       * Si el depósito se llena antes de finalizar el minuto,
-       * no se reasigna potencia hasta el minuto siguiente.
+       * D2 conserva la prioridad: su consigna modulante se descuenta primero.
+       * D1 recibe después la potencia restante y continúa trabajando como
+       * todo/nada.
        */
       remainingPowerKW -=
         assignedPowerKW;
@@ -5755,6 +6070,22 @@ function applyGeneratorForMinute(
           result.availableExchangerPowerKW,
 
         maximumAbsorbablePowerKW,
+
+        controlMode:
+          d2Modulating
+            ? "modulating-parallel-d2"
+            : "on-off",
+
+        d1HeatingActive,
+
+        hydraulicCompensationEnergyKWh:
+          d2Modulating
+            ? hydraulicExtractionByTank[
+                originalIndex
+              ]
+            : 0,
+
+        instantaneousRequiredPowerKW,
 
         thermalCorrectionFactor:
           result.thermalCorrectionFactor,
@@ -5801,18 +6132,101 @@ function applyGeneratorForMinute(
         absorbedEnergyKWh
     );
 
-  generatorState.totalRunningMinutes +=
-    intervalMinutes;
+  const effectivePowerKW =
+    intervalMinutes > 0
+      ? absorbedEnergyKWh *
+        ACS_CONSTANTS.MINUTES_PER_HOUR /
+        intervalMinutes
+      : 0;
+
+  if (effectivePowerKW > 0) {
+    generatorState.totalRunningMinutes +=
+      intervalMinutes;
+  }
+
+  generatorState.currentPowerKW =
+    Math.max(
+      0,
+      Math.min(
+        config.generatorPowerKW,
+        effectivePowerKW
+      )
+    );
+
+  const hasSufficientGeneratorInertia =
+    config.hasSufficientGeneratorInertia !== false;
+
+  const generatorMinimumPowerKW =
+    Math.max(
+      0,
+      Number(
+        config.generatorMinimumPowerKW || 0
+      )
+    );
+
+  const maximumBelowMinimumPowerMinutes =
+    Math.max(
+      0,
+      Number(
+        config.maximumBelowMinimumPowerMinutes || 0
+      )
+    );
+
+  const operatingBelowMinimum =
+    !hasSufficientGeneratorInertia &&
+    generatorMinimumPowerKW > 0 &&
+    generatorState.running &&
+    effectivePowerKW <
+      generatorMinimumPowerKW - 1e-12;
+
+  if (operatingBelowMinimum) {
+    generatorState.belowMinimumPowerMinutes +=
+      intervalMinutes;
+  } else {
+    generatorState.belowMinimumPowerMinutes = 0;
+  }
+
+  const minimumPowerStopRequired =
+    operatingBelowMinimum &&
+    generatorState.belowMinimumPowerMinutes + 1e-12 >=
+      maximumBelowMinimumPowerMinutes;
 
   return {
-    generatorRunning: true,
+    generatorRunning:
+      effectivePowerKW > 0,
 
-    generatorPowerKW:
+    generatorDemandActive: true,
+
+    nominalGeneratorPowerKW:
       config.generatorPowerKW,
 
-    requestedEnergyKWh,
+    rampLimitedGeneratorPowerKW,
+    previousGeneratorPowerKW,
+
+    generatorPowerKW:
+      effectivePowerKW,
+
+    effectivePowerKW,
+
+    hasSufficientGeneratorInertia,
+    generatorMinimumPowerKW,
+    maximumBelowMinimumPowerMinutes,
+    operatingBelowMinimum,
+    belowMinimumPowerMinutes:
+      generatorState.belowMinimumPowerMinutes,
+    minimumPowerStopRequired,
+
+    /*
+     * En este modelo simplificado el generador entrega exactamente
+     * la energía que absorben los intercambiadores. No existe energía
+     * sobrante ni rechazada.
+     */
+    requestedEnergyKWh:
+      absorbedEnergyKWh,
+
     absorbedEnergyKWh,
-    unusedEnergyKWh,
+
+    unusedEnergyKWh: 0,
 
     initialExchangerDiagnostics,
 
@@ -6281,14 +6695,974 @@ function combinePartialGenerationResults(
 }
 
 /**
- * Resuelve un minuto completo.
+ * Resuelve la hidráulica de un subintervalo sin modificar los depósitos
+ * definitivos.
  *
- * Orden:
- * 1. Estado inicial.
- * 2. Control del generador.
- * 3. Resolución hidráulica.
- * 4. Aplicación de generación.
- * 5. Estado final.
+ * La demanda del minuto se escala con la duración del subintervalo. La
+ * recirculación ya queda escalada por intervalMinutes dentro del estado
+ * hidráulico.
+ */
+function resolveHydraulicSubintervalIteratively(
+  params
+) {
+  const {
+    config,
+    tanks,
+    minuteIndex,
+    intervalMinutes,
+
+    tolerance =
+      ACS_CONSTANTS
+        .DEFAULT_CONVERGENCE_TOLERANCE,
+
+    maxIterations =
+      ACS_CONSTANTS
+        .DEFAULT_MAX_ITERATIONS,
+
+    relaxationFactor = 0.5
+  } = params;
+
+  requirePositiveNumber(
+    intervalMinutes,
+    "intervalMinutes"
+  );
+
+  const minuteDemand =
+    getMinuteDemand(
+      config.hourlyDemandL,
+      minuteIndex,
+      config.intrahourDemandWeights
+    );
+
+  const equivalentDemandVolumeL =
+    minuteDemand.equivalentDemandVolumeL *
+    intervalMinutes;
+
+  const initialTankStates =
+    getTankStates(tanks);
+
+  const initialOutletTemperatureC =
+    getSystemOutletTemperatureC(
+      config,
+      tanks
+    );
+
+  let assumedOutletTemperatureC =
+    initialOutletTemperatureC;
+
+  let converged = false;
+  let iterations = 0;
+  let finalProvisionalTanks = null;
+  let finalHydraulicState = null;
+  let finalHydraulicResult = null;
+
+  for (
+    let iteration = 1;
+    iteration <= maxIterations;
+    iteration += 1
+  ) {
+    iterations = iteration;
+
+    const provisionalTanks =
+      cloneTanks(tanks);
+
+    const hydraulicState =
+      new ACSMinuteHydraulicState({
+        minuteIndex,
+
+        hourlyDemandVolumeL:
+          minuteDemand.hourlyDemandVolumeL,
+
+        intrahourWeight:
+          minuteDemand.intrahourWeight,
+
+        intrahourDemandProfileType:
+          config.intrahourDemandProfileType,
+
+        equivalentDemandVolumeL,
+
+        hotWaterTemperatureC:
+          assumedOutletTemperatureC,
+
+        storageTemperatureC:
+          config.storageTemperatureC,
+
+        useTemperatureC:
+          config.useTemperatureC,
+
+        networkTemperatureC:
+          config.networkTemperatureC,
+
+        recirculationFlowLPerMinute:
+          config.recirculationFlowLPerMinute,
+
+        intervalMinutes
+      });
+
+    const hydraulicResult =
+      resolveHydraulicPass({
+        config,
+        tanks: provisionalTanks,
+        hydraulicState
+      });
+
+    const calculatedOutletTemperatureC =
+      hydraulicResult
+        .finalOutletTemperatureC;
+
+    finalProvisionalTanks =
+      provisionalTanks;
+
+    finalHydraulicState =
+      hydraulicState;
+
+    finalHydraulicResult =
+      hydraulicResult;
+
+    if (
+      hasConverged(
+        assumedOutletTemperatureC,
+        calculatedOutletTemperatureC,
+        tolerance
+      )
+    ) {
+      assumedOutletTemperatureC =
+        calculatedOutletTemperatureC;
+
+      converged = true;
+      break;
+    }
+
+    assumedOutletTemperatureC =
+      relaxTemperature(
+        assumedOutletTemperatureC,
+        calculatedOutletTemperatureC,
+        relaxationFactor
+      );
+  }
+
+  if (!finalProvisionalTanks) {
+    throw new ACSSimulationError(
+      "No se ha podido resolver el subintervalo hidráulico."
+    );
+  }
+
+  return {
+    converged,
+    iterations,
+    intervalMinutes,
+
+    initialOutletTemperatureC,
+
+    finalOutletTemperatureC:
+      finalHydraulicResult
+        .finalOutletTemperatureC,
+
+    assumedOutletTemperatureC,
+
+    hydraulicState:
+      finalHydraulicState.getState(),
+
+    hydraulicResult:
+      cloneObject(
+        finalHydraulicResult
+      ),
+
+    initialTankStates,
+
+    finalTankStates:
+      getTankStates(
+        finalProvisionalTanks
+      ),
+
+    provisionalTanks:
+      finalProvisionalTanks
+  };
+}
+
+/**
+ * Integra continuamente el balance energético durante un minuto.
+ *
+ * En cada subintervalo se evalúan, desde el mismo estado inicial:
+ *
+ *   dE/dt = Pgenerador - Pconsumo - Ppérdidas
+ *
+ * La generación y la extracción hidráulica se calculan sobre copias
+ * independientes. Después se aplica conjuntamente el incremento neto a
+ * cada depósito. Así desaparece el orden artificial "generar y después
+ * consumir" o "consumir y después generar".
+ *
+ * El método numérico es Euler explícito por subintervalos. Con 60
+ * subintervalos por minuto, el paso de integración es de un segundo.
+ */
+function integrateContinuousMinute(
+  params
+) {
+  const {
+    config,
+    tanks,
+    generatorState,
+    minuteIndex,
+
+    integrationSubsteps = 60,
+
+    tolerance =
+      ACS_CONSTANTS
+        .DEFAULT_CONVERGENCE_TOLERANCE,
+
+    maxIterations =
+      ACS_CONSTANTS
+        .DEFAULT_MAX_ITERATIONS,
+
+    relaxationFactor = 0.5
+  } = params;
+
+  requirePositiveNumber(
+    integrationSubsteps,
+    "integrationSubsteps"
+  );
+
+  if (!Number.isInteger(integrationSubsteps)) {
+    throw new ACSSimulationError(
+      "integrationSubsteps debe ser un número entero."
+    );
+  }
+
+  const intervalMinutes = 1;
+  const subintervalMinutes =
+    intervalMinutes /
+    integrationSubsteps;
+
+  const initialTankStates =
+    getTankStates(tanks);
+
+  const initialStoredEnergyKWh =
+    calculateTotalStoredEnergyKWh(
+      tanks
+    );
+
+  const generatorRunningAtMinuteStart =
+    generatorState.running;
+
+  let stoppedDuringMinute = false;
+  let stopMinuteOffset = null;
+
+  const generationTankTotals =
+    tanks.map(
+      tank => ({
+        tankId: tank.id,
+        exchangerType:
+          tank.exchangerType,
+        nominalExchangerPowerKW:
+          tank.exchangerPowerKW,
+        absorbedEnergyKWh: 0,
+        effectiveMinutes: 0,
+        assignedPowerTimeKWMin: 0,
+        maximumAbsorbablePowerKW: 0,
+        initialExchangerDiagnostic: null,
+        finalExchangerDiagnostic: null,
+        finalTankState: null
+      })
+    );
+
+  let generatedEnergyKWh = 0;
+  let requestedGenerationEnergyKWh = 0;
+  let hydraulicEnergyExtractedKWh = 0;
+  let requestedDemandEnergyKWh = 0;
+  let coveredDemandEnergyKWh = 0;
+  let uncoveredDemandEnergyKWh = 0;
+  let coveredEquivalentVolumeL = 0;
+  let uncoveredEquivalentVolumeL = 0;
+  let equivalentDemandVolumeL = 0;
+  let recirculationLossKWh = 0;
+
+  /*
+   * Acumuladores hidráulicos del minuto completo.
+   *
+   * Cada resolución hidráulica devuelve volúmenes correspondientes a un
+   * subintervalo (normalmente 1 segundo). No se puede publicar el valor del
+   * último subintervalo como si fuese un caudal L/min: hay que sumar los
+   * volúmenes de todos los subpasos del minuto.
+   */
+  let hotConsumptionVolumeL = 0;
+  let coldMixingVolumeL = 0;
+  let recirculationVolumeL = 0;
+  let tankRecirculationVolumeL = 0;
+  let bypassRecirculationVolumeL = 0;
+  let totalVolumeThroughTanksL = 0;
+  let networkReplacementVolumeL = 0;
+
+  let allConverged = true;
+  let maximumIterationsUsed = 0;
+  let lastHydraulicResolution = null;
+  let firstGenerationDiagnostics = null;
+  let finalGenerationDiagnostics = null;
+
+  /*
+   * Cronología instantánea de potencia dentro del minuto.
+   * Cada elemento representa un subintervalo continuo con la potencia
+   * realmente absorbida por cada intercambiador y por el generador.
+   */
+  const powerTimeline = [];
+
+  for (
+    let substep = 0;
+    substep < integrationSubsteps;
+    substep += 1
+  ) {
+    const substepInitialEnergies =
+      tanks.map(
+        tank => tank.energyKWh
+      );
+
+    /*
+     * Rama hidráulica: calcula consumo y pérdidas desde el estado inicial
+     * del subintervalo, pero todavía no modifica el estado definitivo.
+     */
+    const hydraulicResolution =
+      resolveHydraulicSubintervalIteratively({
+        config,
+        tanks,
+        minuteIndex,
+        intervalMinutes:
+          subintervalMinutes,
+        tolerance,
+        maxIterations,
+        relaxationFactor
+      });
+
+    /*
+     * Rama de generación: se evalúa desde exactamente el mismo estado
+     * inicial mediante una copia independiente.
+     */
+    const hydraulicExtractedEnergyKWhByTank =
+      tanks.map(
+        (tank, tankIndex) =>
+          Math.max(
+            0,
+            substepInitialEnergies[tankIndex] -
+              hydraulicResolution
+                .provisionalTanks[tankIndex]
+                .energyKWh
+          )
+      );
+
+    const generationTanks =
+      cloneTanks(tanks);
+
+    const generation =
+      applyGeneratorForMinute({
+        config,
+        tanks: generationTanks,
+        generatorState,
+        intervalMinutes:
+          subintervalMinutes,
+        hydraulicExtractedEnergyKWhByTank
+      });
+
+    if (!firstGenerationDiagnostics) {
+      firstGenerationDiagnostics =
+        generation
+          .initialExchangerDiagnostics;
+    }
+
+    finalGenerationDiagnostics =
+      generation
+        .finalExchangerDiagnostics;
+
+    /*
+     * La energía absorbida durante el subintervalo puede corresponder a
+     * menos tiempo que la duración completa del paso cuando un depósito
+     * alcanza Tset. `effectivePowerKW` es entonces una potencia media y no
+     * debe utilizarse como potencia instantánea.
+     *
+     * Cada intercambiador trabaja a la potencia que se le asignó al inicio
+     * del paso y se desconecta exactamente al agotarse su `effectiveMinutes`.
+     * Se generan aquí los tramos ON/OFF reales que consumirán la gráfica y
+     * la tabla de operación.
+     */
+    const instantaneousTankStates =
+      generation.tankResults.map(
+        tankResult => ({
+          powerKW:
+            Number.isFinite(
+              tankResult?.assignedPowerKW
+            )
+              ? Math.max(
+                  0,
+                  tankResult.assignedPowerKW
+                )
+              : 0,
+
+          runningMinutes:
+            Number.isFinite(
+              tankResult?.effectiveMinutes
+            )
+              ? Math.min(
+                  subintervalMinutes,
+                  Math.max(
+                    0,
+                    tankResult.effectiveMinutes
+                  )
+                )
+              : 0
+        })
+      );
+
+    const localBoundaries = [
+      0,
+      subintervalMinutes,
+      ...instantaneousTankStates.map(
+        state =>
+          state.runningMinutes
+      )
+    ]
+      .filter(
+        value =>
+          Number.isFinite(value) &&
+          value >= 0 &&
+          value <= subintervalMinutes
+      )
+      .sort(
+        (a, b) => a - b
+      )
+      .filter(
+        (value, index, values) =>
+          index === 0 ||
+          Math.abs(
+            value - values[index - 1]
+          ) > 1e-12
+      );
+
+    const appendPowerSegment = (
+      startMinute,
+      endMinute,
+      tankPowersKW
+    ) => {
+      if (
+        endMinute - startMinute <=
+        1e-12
+      ) {
+        return;
+      }
+
+      const totalPowerKW =
+        tankPowersKW.reduce(
+          (sum, value) =>
+            sum + value,
+          0
+        );
+
+      const previousSegment =
+        powerTimeline[
+          powerTimeline.length - 1
+        ];
+
+      const sameAsPrevious =
+        previousSegment &&
+        Math.abs(
+          previousSegment.totalPowerKW -
+          totalPowerKW
+        ) <= 1e-9 &&
+        previousSegment.tankPowersKW.length ===
+          tankPowersKW.length &&
+        previousSegment.tankPowersKW.every(
+          (value, index) =>
+            Math.abs(
+              value -
+              tankPowersKW[index]
+            ) <= 1e-9
+        ) &&
+        Math.abs(
+          previousSegment.endMinute -
+          startMinute
+        ) <= 1e-9;
+
+      if (sameAsPrevious) {
+        previousSegment.endMinute =
+          endMinute;
+      } else {
+        powerTimeline.push({
+          startMinute,
+          endMinute,
+          totalPowerKW,
+          tankPowersKW
+        });
+      }
+    };
+
+    for (
+      let boundaryIndex = 0;
+      boundaryIndex <
+        localBoundaries.length - 1;
+      boundaryIndex += 1
+    ) {
+      const localStart =
+        localBoundaries[boundaryIndex];
+
+      const localEnd =
+        localBoundaries[boundaryIndex + 1];
+
+      const tankPowersKW =
+        instantaneousTankStates.map(
+          state =>
+            localStart <
+            state.runningMinutes - 1e-12
+              ? state.powerKW
+              : 0
+        );
+
+      appendPowerSegment(
+        substep * subintervalMinutes +
+          localStart,
+        substep * subintervalMinutes +
+          localEnd,
+        tankPowersKW
+      );
+    }
+
+    tanks.forEach(
+      (tank, tankIndex) => {
+        const hydraulicFinalEnergyKWh =
+          hydraulicResolution
+            .provisionalTanks[tankIndex]
+            .energyKWh;
+
+        const generationFinalEnergyKWh =
+          generationTanks[tankIndex]
+            .energyKWh;
+
+        const extractedEnergyKWh =
+          Math.max(
+            0,
+            substepInitialEnergies[tankIndex] -
+              hydraulicFinalEnergyKWh
+          );
+
+        const tankGeneration =
+          generation.tankResults[tankIndex];
+
+        /**
+         * La energía generada debe tomarse del resultado explícito del
+         * intercambiador. En D2 modulante, la copia de generación se descarga
+         * virtualmente antes de aplicar potencia; por ello no puede deducirse
+         * comparando únicamente su energía final con el estado inicial.
+         */
+        const absorbedEnergyKWh =
+          Math.max(
+            0,
+            tankGeneration
+              ?.absorbedEnergyKWh || 0
+          );
+
+        /*
+         * Aplicación simultánea del incremento integrado:
+         *
+         * E(t + dt) = E(t) + Egen(dt) - Econsumo(dt) - Epérdidas(dt)
+         */
+        tank.energyKWh =
+          substepInitialEnergies[tankIndex] +
+          absorbedEnergyKWh -
+          extractedEnergyKWh;
+
+        tank.normalizeState();
+
+        const total =
+          generationTankTotals[tankIndex];
+
+        total.absorbedEnergyKWh +=
+          absorbedEnergyKWh;
+
+        total.effectiveMinutes +=
+          tankGeneration?.effectiveMinutes || 0;
+
+        total.assignedPowerTimeKWMin +=
+          (tankGeneration?.assignedPowerKW || 0) *
+          subintervalMinutes;
+
+        total.maximumAbsorbablePowerKW =
+          Math.max(
+            total.maximumAbsorbablePowerKW,
+            tankGeneration
+              ?.maximumAbsorbablePowerKW || 0
+          );
+
+        total.initialExchangerDiagnostic ??=
+          tankGeneration
+            ?.initialExchangerDiagnostic || null;
+
+        total.finalExchangerDiagnostic =
+          tankGeneration
+            ?.finalExchangerDiagnostic || null;
+
+        total.finalTankState =
+          tank.getState();
+
+        hydraulicEnergyExtractedKWh +=
+          extractedEnergyKWh;
+      }
+    );
+
+    /*
+     * El control todo/nada también se resuelve dentro del minuto.
+     * Cuando el balance integrado deja todos los depósitos al 100 %,
+     * el generador se detiene en ese instante y permanece parado en los
+     * subintervalos restantes.
+     */
+    const stopByMinimumPower =
+      generatorState.running &&
+      generation.minimumPowerStopRequired === true;
+
+    const stopByFullTanks =
+      generatorState.running &&
+      generationTanks.every(
+        tank =>
+          tank.isFull ||
+          tank.loadPercent >= 99.999
+      );
+
+    if (
+      stopByMinimumPower ||
+      stopByFullTanks
+    ) {
+      generatorState.running = false;
+      generatorState.stopCount += 1;
+
+      if (stopByMinimumPower) {
+        generatorState.minimumPowerForcedStopCount += 1;
+      }
+
+      stopMinuteOffset =
+        (substep + 1) *
+        subintervalMinutes;
+
+      generatorState.lastStopMinute =
+        minuteIndex +
+        stopMinuteOffset;
+
+      generatorState.currentPowerKW = 0;
+      generatorState.belowMinimumPowerMinutes = 0;
+
+      stoppedDuringMinute = true;
+    }
+
+    generatedEnergyKWh +=
+      generation.absorbedEnergyKWh;
+
+    requestedGenerationEnergyKWh +=
+      generation.requestedEnergyKWh;
+
+    const coverage =
+      hydraulicResolution
+        .hydraulicState
+        .demandCoverage;
+
+    requestedDemandEnergyKWh +=
+      coverage.requestedEnergyKWh;
+
+    coveredDemandEnergyKWh +=
+      coverage.coveredEnergyKWh;
+
+    uncoveredDemandEnergyKWh +=
+      coverage.uncoveredEnergyKWh;
+
+    coveredEquivalentVolumeL +=
+      coverage.coveredEquivalentVolumeL;
+
+    uncoveredEquivalentVolumeL +=
+      coverage.uncoveredEquivalentVolumeL;
+
+    equivalentDemandVolumeL +=
+      hydraulicResolution
+        .hydraulicState
+        .equivalentDemandVolumeL;
+
+    recirculationLossKWh +=
+      hydraulicResolution
+        .hydraulicState
+        .recirculationLossKWh;
+
+    hotConsumptionVolumeL +=
+      hydraulicResolution
+        .hydraulicState
+        .hotConsumptionVolumeL || 0;
+
+    coldMixingVolumeL +=
+      hydraulicResolution
+        .hydraulicState
+        .coldMixingVolumeL || 0;
+
+    recirculationVolumeL +=
+      hydraulicResolution
+        .hydraulicState
+        .recirculationVolumeL || 0;
+
+    tankRecirculationVolumeL +=
+      hydraulicResolution
+        .hydraulicState
+        .tankRecirculationVolumeL || 0;
+
+    bypassRecirculationVolumeL +=
+      hydraulicResolution
+        .hydraulicState
+        .bypassRecirculationVolumeL || 0;
+
+    totalVolumeThroughTanksL +=
+      hydraulicResolution
+        .hydraulicState
+        .totalVolumeThroughTanksL || 0;
+
+    networkReplacementVolumeL +=
+      hydraulicResolution
+        .hydraulicState
+        .networkReplacementVolumeL || 0;
+
+    allConverged =
+      allConverged &&
+      hydraulicResolution.converged;
+
+    maximumIterationsUsed =
+      Math.max(
+        maximumIterationsUsed,
+        hydraulicResolution.iterations
+      );
+
+    lastHydraulicResolution =
+      hydraulicResolution;
+  }
+
+  const finalStoredEnergyKWh =
+    calculateTotalStoredEnergyKWh(
+      tanks
+    );
+
+  const generation = {
+    /*
+     * Compatibilidad: generatorRunning indica que hubo funcionamiento
+     * durante el minuto, aunque la parada se produjera antes de terminar.
+     */
+    generatorRunning:
+      generatedEnergyKWh > 0,
+
+    generatorDemandActive:
+      generatorRunningAtMinuteStart ||
+      generatorState.running,
+
+    generatorRunningAtStart:
+      generatorRunningAtMinuteStart,
+
+    generatorRunningAtEnd:
+      generatorState.running,
+
+    stoppedDuringMinute,
+
+    stopMinuteOffset,
+
+    nominalGeneratorPowerKW:
+      config.generatorPowerKW,
+
+    generatorPowerKW:
+      generatedEnergyKWh *
+      ACS_CONSTANTS.MINUTES_PER_HOUR /
+      intervalMinutes,
+
+    effectivePowerKW:
+      generatedEnergyKWh *
+      ACS_CONSTANTS.MINUTES_PER_HOUR /
+      intervalMinutes,
+
+    /*
+     * El generador entrega exactamente la energía absorbida.
+     */
+    requestedEnergyKWh:
+      generatedEnergyKWh,
+
+    absorbedEnergyKWh:
+      generatedEnergyKWh,
+
+    unusedEnergyKWh: 0,
+
+    powerTimeline,
+
+    initialExchangerDiagnostics:
+      firstGenerationDiagnostics ||
+      tanks.map(
+        tank =>
+          getTankExchangerDiagnostic(
+            tank
+          )
+      ),
+
+    finalExchangerDiagnostics:
+      finalGenerationDiagnostics ||
+      tanks.map(
+        tank =>
+          getTankExchangerDiagnostic(
+            tank
+          )
+      ),
+
+    tankResults:
+      generationTankTotals.map(
+        total => ({
+          tankId:
+            total.tankId,
+
+          exchangerType:
+            total.exchangerType,
+
+          nominalExchangerPowerKW:
+            total.nominalExchangerPowerKW,
+
+          availableExchangerPowerKW:
+            total
+              .initialExchangerDiagnostic
+              ?.effectiveExchangerPowerKW ?? 0,
+
+          maximumAbsorbablePowerKW:
+            total.maximumAbsorbablePowerKW,
+
+          thermalCorrectionFactor:
+            total
+              .finalExchangerDiagnostic
+              ?.thermalCorrectionFactor ?? 1,
+
+          assignedPowerKW:
+            total.assignedPowerTimeKWMin /
+            intervalMinutes,
+
+          effectivePowerKW:
+            total.absorbedEnergyKWh *
+            ACS_CONSTANTS.MINUTES_PER_HOUR /
+            intervalMinutes,
+
+          absorbedEnergyKWh:
+            total.absorbedEnergyKWh,
+
+          effectiveMinutes:
+            total.effectiveMinutes,
+
+          initialExchangerDiagnostic:
+            total.initialExchangerDiagnostic,
+
+          finalExchangerDiagnostic:
+            total.finalExchangerDiagnostic,
+
+          finalTankState:
+            total.finalTankState
+        })
+      )
+  };
+
+  const demandCoverage = {
+    requestedEnergyKWh:
+      requestedDemandEnergyKWh,
+
+    coveredEnergyKWh:
+      coveredDemandEnergyKWh,
+
+    uncoveredEnergyKWh:
+      uncoveredDemandEnergyKWh,
+
+    coveredEquivalentVolumeL,
+    uncoveredEquivalentVolumeL,
+
+    coveragePercent:
+      calculateCoveragePercent(
+        requestedDemandEnergyKWh,
+        coveredDemandEnergyKWh
+      )
+  };
+
+  const hydraulicState = {
+    ...lastHydraulicResolution
+      .hydraulicState,
+
+    intervalMinutes,
+    equivalentDemandVolumeL,
+
+    /*
+     * Volúmenes integrados durante el minuto completo. Como el intervalo
+     * público dura exactamente un minuto, estos valores numéricos equivalen
+     * también a los caudales medios expresados en L/min.
+     */
+    hotConsumptionVolumeL,
+    coldMixingVolumeL,
+    recirculationVolumeL,
+    tankRecirculationVolumeL,
+    bypassRecirculationVolumeL,
+    totalVolumeThroughTanksL,
+    networkReplacementVolumeL,
+
+    recirculationLossKWh,
+    demandCoverage
+  };
+
+  const iterativeResolution = {
+    converged:
+      allConverged,
+
+    iterations:
+      maximumIterationsUsed,
+
+    integrationMethod:
+      "continuous-explicit-euler",
+
+    integrationSubsteps,
+
+    integrationStepSeconds:
+      subintervalMinutes * 60,
+
+    initialOutletTemperatureC:
+      initialTankStates[
+        initialTankStates.length - 1
+      ].outletTemperatureC,
+
+    finalOutletTemperatureC:
+      getSystemOutletTemperatureC(
+        config,
+        tanks
+      ),
+
+    assumedOutletTemperatureC:
+      lastHydraulicResolution
+        .assumedOutletTemperatureC,
+
+    hydraulicState,
+
+    hydraulicResult:
+      lastHydraulicResolution
+        .hydraulicResult,
+
+    initialTankStates,
+
+    finalTankStates:
+      getTankStates(tanks)
+  };
+
+  return {
+    intervalMinutes,
+    subintervalMinutes,
+    integrationSubsteps,
+
+    initialTankStates,
+    initialStoredEnergyKWh,
+    finalStoredEnergyKWh,
+
+    hydraulicEnergyExtractedKWh,
+    recirculationLossKWh,
+
+    demandCoverage,
+    generation,
+    iterativeResolution
+  };
+}
+
+/**
+ * Resuelve un minuto completo mediante integración continua del balance
+ * energético. Se conservan sin cambios el control del generador, el modelo
+ * hidráulico, los intercambiadores, la demanda, la recirculación y la forma
+ * de los resultados públicos.
  */
 function resolveSimulationMinute(
   params
@@ -6298,6 +7672,8 @@ function resolveSimulationMinute(
     tanks,
     generatorState,
     minuteIndex,
+
+    integrationSubsteps = 60,
 
     tolerance =
       ACS_CONSTANTS
@@ -6320,8 +7696,6 @@ function resolveSimulationMinute(
   }
 
   const intervalMinutes = 1;
-  const halfIntervalMinutes =
-    intervalMinutes / 2;
 
   const initialTankStates =
     getTankStates(tanks);
@@ -6339,72 +7713,60 @@ function resolveSimulationMinute(
       minuteIndex
     });
 
-  /*
-   * Integración simétrica del balance energético:
-   *
-   * E(n+1) = E(n) + integral(Pgen - Psalida) dt
-   *
-   * Se aproxima mediante un esquema de punto medio:
-   *
-   * 1. se aplica media generación;
-   * 2. se resuelve el transporte hidráulico del minuto;
-   * 3. se aplica la otra media generación.
-   *
-   * Así se evita imponer artificialmente:
-   * - descarga completa seguida de carga;
-   * - o carga completa seguida de descarga.
-   */
-  const firstHalfGeneration =
-    applyGeneratorForMinute({
+  const continuousResolution =
+    integrateContinuousMinute({
       config,
       tanks,
       generatorState,
-      intervalMinutes:
-        halfIntervalMinutes
-    });
-
-  const energyBeforeHydraulicsKWh =
-    calculateTotalStoredEnergyKWh(
-      tanks
-    );
-
-  const iterativeResolution =
-    resolveMinuteIteratively({
-      config,
-      tanks,
       minuteIndex,
+      integrationSubsteps,
       tolerance,
       maxIterations,
       relaxationFactor
     });
 
-  const energyAfterHydraulicsKWh =
-    calculateTotalStoredEnergyKWh(
-      tanks
-    );
+  const {
+    iterativeResolution,
+    generation,
+    demandCoverage,
+    hydraulicEnergyExtractedKWh,
+    recirculationLossKWh
+  } = continuousResolution;
 
-  const hydraulicEnergyExtractedKWh =
-    Math.max(
-      0,
-      energyBeforeHydraulicsKWh -
-        energyAfterHydraulicsKWh
-    );
+  if (generation.stoppedDuringMinute) {
+    generatorControl.stopped = true;
+    generatorControl.running = false;
+    generatorControl.reason =
+      "Parada al alcanzar el 100 % durante el minuto.";
+    generatorControl.stopMinuteOffset =
+      generation.stopMinuteOffset;
+  }
 
-  const secondHalfGeneration =
-    applyGeneratorForMinute({
-      config,
-      tanks,
-      generatorState,
-      intervalMinutes:
-        halfIntervalMinutes
-    });
+  generatorControl.runningAtEnd =
+    generation.generatorRunningAtEnd;
 
-  const generation =
-    combinePartialGenerationResults(
-      firstHalfGeneration,
-      secondHalfGeneration,
-      intervalMinutes
-    );
+  const generatorEffectiveRunningMinutes =
+    Array.isArray(
+      generation.powerTimeline
+    )
+      ? generation.powerTimeline.reduce(
+          (total, segment) =>
+            total +
+            (
+              segment.totalPowerKW > 1e-9
+                ? Math.max(
+                    0,
+                    segment.endMinute -
+                    segment.startMinute
+                  )
+                : 0
+            ),
+          0
+        )
+      : 0;
+
+  generation.effectiveRunningMinutes =
+    generatorEffectiveRunningMinutes;
 
   const finalStoredEnergyKWh =
     calculateTotalStoredEnergyKWh(
@@ -6417,16 +7779,6 @@ function resolveSimulationMinute(
       tanks,
       intervalMinutes
     });
-
-  const demandCoverage =
-    iterativeResolution
-      .hydraulicState
-      .demandCoverage;
-
-  const recirculationLossKWh =
-    iterativeResolution
-      .hydraulicState
-      .recirculationLossKWh;
 
   const storedEnergyVariationKWh =
     finalStoredEnergyKWh -
@@ -6483,11 +7835,12 @@ function resolveSimulationMinute(
       initialStoredEnergyKWh,
 
       /*
-       * Se conserva este campo por compatibilidad.
-       * Ahora representa el estado tras la primera media generación
-       * y la extracción hidráulica.
+       * Campo conservado por compatibilidad. En el cálculo continuo no
+       * existe un estado intermedio "después de hidráulica"; se informa el
+       * estado final integrado del minuto.
        */
-      energyAfterHydraulicsKWh,
+      energyAfterHydraulicsKWh:
+        finalStoredEnergyKWh,
 
       finalStoredEnergyKWh,
 
@@ -6638,6 +7991,8 @@ const ACSBlock4 = {
   relaxTemperature,
 
   resolveMinuteIteratively,
+  resolveHydraulicSubintervalIteratively,
+  integrateContinuousMinute,
 
   calculateSanitaryStatus,
   combinePartialGenerationResults,
@@ -7366,6 +8721,40 @@ function aggregateHourlyResult(
           .generatorRunning
     ).length;
 
+  /*
+   * Potencias horarias explícitas para la UI.
+   * La potencia efectiva media de la hora es la energía absorbida
+   * dividida por una hora. Se conserva también la potencia nominal
+   * configurada y la potencia media solicitada al generador.
+   */
+  const generatorNominalPowerKW =
+    firstMinute
+      .generation
+      .generatorPowerKW;
+
+  const generatorRequestedEnergyKWh =
+    sumNumbers(
+      orderedMinutes.map(
+        result =>
+          result
+            .generation
+            .requestedEnergyKWh
+      )
+    );
+
+  const generatorRequestedPowerKW =
+    generatorRequestedEnergyKWh;
+
+  const generatorEffectivePowerKW =
+    generatedEnergyKWh;
+
+  const generatorOperatingPowerKW =
+    generatorRunningMinutes > 0
+      ? generatedEnergyKWh *
+        ACS_CONSTANTS.MINUTES_PER_HOUR /
+        generatorRunningMinutes
+      : 0;
+
   const generatorStarts =
     orderedMinutes.filter(
       result =>
@@ -7555,7 +8944,25 @@ function aggregateHourlyResult(
         generatorStarts,
 
       stops:
-        generatorStops
+        generatorStops,
+
+      nominalPowerKW:
+        generatorNominalPowerKW,
+
+      requestedEnergyKWh:
+        generatorRequestedEnergyKWh,
+
+      requestedPowerKW:
+        generatorRequestedPowerKW,
+
+      effectivePowerKW:
+        generatorEffectivePowerKW,
+
+      absorbedPowerKW:
+        generatorEffectivePowerKW,
+
+      operatingPowerKW:
+        generatorOperatingPowerKW
     },
 
     sanitary: {
@@ -8288,6 +9695,353 @@ function aggregatePeriodResults(
   };
 }
 
+
+/**
+ * Construye una única cronología de funcionamiento todo/nada del generador.
+ *
+ * El control del motor determina cuándo comienza y termina cada ciclo. La
+ * duración energética efectiva del ciclo se obtiene de la energía absorbida
+ * y de la potencia nominal fija:
+ *
+ *   tiempo [min] = energía [kWh] / potencia [kW] * 60
+ *
+ * Esta cronología es la fuente común para la gráfica y para la tabla horaria.
+ */
+function buildGeneratorOperatingChronology(
+  minuteResults,
+  hourlyResults,
+  config
+) {
+  const numberOrZero = value =>
+    typeof value === "number" &&
+    Number.isFinite(value)
+      ? value
+      : 0;
+
+  const orderedMinutes =
+    Array.isArray(minuteResults)
+      ? [...minuteResults].sort(
+          (a, b) =>
+            a.minuteIndex -
+            b.minuteIndex
+        )
+      : [];
+
+  const nominalPowerKW =
+    numberOrZero(
+      config?.generatorPowerKW
+    );
+
+  const periodStartMinute =
+    orderedMinutes.length > 0
+      ? orderedMinutes[0].minuteIndex
+      : numberOrZero(
+          config?.stabilizationMinutes
+        );
+
+  const periodMinutes =
+    orderedMinutes.length;
+
+  /*
+   * Potencia efectiva continua. Los segmentos se generan dentro del motor
+   * con la misma resolución temporal utilizada para integrar el balance.
+   */
+  const powerSegments = [];
+
+  orderedMinutes.forEach(
+    (minute, relativeMinuteIndex) => {
+      const sourceTimeline =
+        Array.isArray(
+          minute?.generation
+            ?.powerTimeline
+        )
+          ? minute.generation
+              .powerTimeline
+          : [];
+
+      sourceTimeline.forEach(
+        sourceSegment => {
+          const startMinute =
+            relativeMinuteIndex +
+            numberOrZero(
+              sourceSegment.startMinute
+            );
+
+          const endMinute =
+            relativeMinuteIndex +
+            numberOrZero(
+              sourceSegment.endMinute
+            );
+
+          const totalPowerKW =
+            numberOrZero(
+              sourceSegment.totalPowerKW
+            );
+
+          const tankPowersKW =
+            Array.isArray(
+              sourceSegment.tankPowersKW
+            )
+              ? sourceSegment
+                  .tankPowersKW
+                  .map(numberOrZero)
+              : [];
+
+          const previous =
+            powerSegments[
+              powerSegments.length - 1
+            ];
+
+          const sameAsPrevious =
+            previous &&
+            Math.abs(
+              previous.totalPowerKW -
+              totalPowerKW
+            ) <= 1e-9 &&
+            previous.tankPowersKW.length ===
+              tankPowersKW.length &&
+            previous.tankPowersKW.every(
+              (value, index) =>
+                Math.abs(
+                  value -
+                  tankPowersKW[index]
+                ) <= 1e-9
+            ) &&
+            Math.abs(
+              previous.endMinute -
+              startMinute
+            ) <= 1e-9;
+
+          if (sameAsPrevious) {
+            previous.endMinute =
+              endMinute;
+          } else {
+            powerSegments.push({
+              startMinute,
+              endMinute,
+              totalPowerKW,
+              tankPowersKW
+            });
+          }
+        }
+      );
+    }
+  );
+
+  /*
+   * Los ciclos siguen definidos por el control térmico: arrancan cuando se
+   * cruza el umbral y terminan al alcanzar el 100 %. La potencia dentro del
+   * ciclo puede variar y pasar de un intercambiador a otro.
+   */
+  const intervals = [];
+  let currentInterval = null;
+
+  orderedMinutes.forEach(
+    (minute, index) => {
+      const control =
+        minute.generatorControl || {};
+
+      const relativeMinute =
+        minute.minuteIndex -
+        periodStartMinute;
+
+      if (
+        !currentInterval &&
+        (
+          control.started === true ||
+          control.previousRunning === true ||
+          minute?.generation
+            ?.generatorDemandActive === true
+        )
+      ) {
+        currentInterval = {
+          cycleIndex:
+            intervals.length,
+          startMinute:
+            clamp(
+              relativeMinute,
+              0,
+              periodMinutes
+            ),
+          absoluteStartMinute:
+            minute.minuteIndex,
+          carryIn:
+            control.started !== true,
+          generatedEnergyKWh: 0
+        };
+      }
+
+      if (currentInterval) {
+        currentInterval.generatedEnergyKWh +=
+          numberOrZero(
+            minute?.generation
+              ?.absorbedEnergyKWh
+          );
+      }
+
+      const isLast =
+        index ===
+        orderedMinutes.length - 1;
+
+      if (
+        currentInterval &&
+        (
+          control.stopped === true ||
+          isLast
+        )
+      ) {
+        const stopOffset =
+          control.stopped === true &&
+          Number.isFinite(
+            minute?.generation
+              ?.stopMinuteOffset
+          )
+            ? minute.generation
+                .stopMinuteOffset
+            : 1;
+
+        currentInterval.endMinute =
+          clamp(
+            relativeMinute +
+            stopOffset,
+            currentInterval.startMinute,
+            periodMinutes
+          );
+
+        currentInterval.runningMinutes =
+          Math.max(
+            0,
+            currentInterval.endMinute -
+            currentInterval.startMinute
+          );
+
+        intervals.push(
+          currentInterval
+        );
+
+        currentInterval = null;
+      }
+    }
+  );
+
+  const hourly =
+    Array.from(
+      { length: 24 },
+      (_value, hourIndex) => {
+        const hourStart =
+          hourIndex *
+          ACS_CONSTANTS.MINUTES_PER_HOUR;
+
+        const hourEnd =
+          hourStart +
+          ACS_CONSTANTS.MINUTES_PER_HOUR;
+
+        const startsInHour =
+          intervals.filter(
+            interval =>
+              !interval.carryIn &&
+              interval.startMinute >=
+                hourStart &&
+              interval.startMinute <
+                hourEnd
+          );
+
+        const runningMinutes =
+          powerSegments.reduce(
+            (total, segment) => {
+              if (
+                segment.totalPowerKW <=
+                1e-9
+              ) {
+                return total;
+              }
+
+              const overlap =
+                Math.max(
+                  0,
+                  Math.min(
+                    segment.endMinute,
+                    hourEnd
+                  ) -
+                  Math.max(
+                    segment.startMinute,
+                    hourStart
+                  )
+                );
+
+              return total + overlap;
+            },
+            0
+          );
+
+        const firstStartMinuteWithinHour =
+          startsInHour.length > 0
+            ? startsInHour[0]
+                .startMinute -
+              hourStart
+            : null;
+
+        return {
+          hourIndex,
+          starts:
+            startsInHour.length,
+          firstStartMinuteWithinHour,
+          runningMinutes,
+          runningHours:
+            runningMinutes /
+            ACS_CONSTANTS
+              .MINUTES_PER_HOUR,
+          averageRuntimePerStartMinutes:
+            startsInHour.length > 0
+              ? startsInHour.reduce(
+                  (sum, interval) =>
+                    sum +
+                    interval.runningMinutes,
+                  0
+                ) /
+                startsInHour.length
+              : null
+        };
+      }
+    );
+
+  if (Array.isArray(hourlyResults)) {
+    hourlyResults
+      .slice(0, 24)
+      .forEach(
+        (hourResult, index) => {
+          const operation =
+            hourly[index];
+
+          hourResult.generator = {
+            ...(hourResult.generator || {}),
+            starts:
+              operation.starts,
+            runningMinutes:
+              operation.runningMinutes,
+            runningHours:
+              operation.runningHours,
+            firstStartMinuteWithinHour:
+              operation
+                .firstStartMinuteWithinHour,
+            averageRuntimePerStartMinutes:
+              operation
+                .averageRuntimePerStartMinutes
+          };
+        }
+      );
+  }
+
+  return {
+    nominalPowerKW,
+    periodStartMinute,
+    periodMinutes,
+    intervals,
+    powerSegments,
+    hourly
+  };
+}
+
 /**
  * Extrae las horas del periodo de estabilización.
  *
@@ -8516,6 +10270,13 @@ function simulateACS(
       config
     );
 
+  const generatorOperation =
+    buildGeneratorOperatingChronology(
+      analysisMinuteResults,
+      analysisHourlyResults,
+      config
+    );
+
   const stabilizationTotals =
     aggregatePeriodResults(
       stabilizationHourlyResults
@@ -8609,6 +10370,8 @@ function simulateACS(
 
         totals:
           analysisTotals,
+
+        generatorOperation,
 
         minute:
           includeMinuteResults
@@ -11932,7 +13695,7 @@ function createUIResult(
 
   return {
     metadata: {
-      engineVersion: "1.1.0",
+      engineVersion: "1.1.1",
 
       analysisHours:
         hourly.length,
@@ -12073,7 +13836,38 @@ function createUIResult(
             stops:
               hour
                 .generator
-                .stops
+                .stops,
+
+            nominalPowerKW:
+              hour
+                .generator
+                .nominalPowerKW,
+
+            requestedPowerKW:
+              hour
+                .generator
+                .requestedPowerKW,
+
+            effectivePowerKW:
+              hour
+                .generator
+                .effectivePowerKW,
+
+            absorbedPowerKW:
+              hour
+                .generator
+                .absorbedPowerKW,
+
+            operatingPowerKW:
+              hour
+                .generator
+                .operatingPowerKW,
+
+            /* Alias directo para gráficas antiguas. */
+            powerKW:
+              hour
+                .generator
+                .effectivePowerKW
           },
 
           sanitary: {
@@ -12117,7 +13911,17 @@ function createUIResult(
                 minimumLoadPercent:
                   tank.minimumLoadPercent,
 
+                maximumLoadPercent:
+                  tank.maximumLoadPercent,
+
                 finalLoadPercent:
+                  tank.finalLoadPercent,
+
+                /*
+                 * Alias de compatibilidad para la gráfica de carga.
+                 * Representa la carga al final de cada hora.
+                 */
+                loadPercent:
                   tank.finalLoadPercent,
 
                 minimumOutletTemperatureC:
@@ -12131,6 +13935,22 @@ function createUIResult(
 
                 effectiveGenerationMinutes:
                   tank.effectiveGenerationMinutes,
+
+                assignedPowerKW:
+                  tank
+                    .exchanger
+                    .averageAssignedPowerKW,
+
+                effectiveGeneratedPowerKW:
+                  tank
+                    .exchanger
+                    .averageGeneratedPowerKW,
+
+                /* Alias habitual consumido por gráficas de potencia. */
+                powerKW:
+                  tank
+                    .exchanger
+                    .averageGeneratedPowerKW,
 
                 exchanger: {
                   type:
@@ -12321,7 +14141,7 @@ function runACSSimulation(
  */
 const ACSSimulationEngine =
   Object.freeze({
-    version: "1.1.0",
+    version: "1.1.1",
 
     constants:
       ACS_CONSTANTS,

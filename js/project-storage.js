@@ -26,7 +26,7 @@
 const ACS_PROJECT_STORAGE_CONFIG =
   Object.freeze({
     FILE_VERSION:
-      "1.0.0",
+      "1.2.0",
 
     FILE_EXTENSION:
       ".acs.json",
@@ -236,6 +236,11 @@ function createProjectFileData(
       name:
         String(
           project.name || ""
+        ),
+
+      client:
+        String(
+          project.client || ""
         ),
 
       designer:
@@ -559,6 +564,11 @@ function restoreGeneralProjectData(
   );
 
   setFieldValue(
+    "projectClient",
+    project.client || ""
+  );
+
+  setFieldValue(
     "projectDesigner",
     project.designer
   );
@@ -590,6 +600,25 @@ function restoreGeneralProjectData(
  * ============================================================ */
 
 /**
+ * Asigna un campo únicamente cuando el archivo contiene el dato.
+ * Permite abrir proyectos de versiones anteriores conservando
+ * el valor predeterminado actual para los parámetros nuevos.
+ */
+function setFieldValueIfPresent(
+  id,
+  value
+) {
+  if (
+    value === undefined ||
+    value === null
+  ) {
+    return;
+  }
+
+  setFieldValue(id, value);
+}
+
+/**
  * Restaura el perfil de demanda.
  */
 function restoreDemandInputs(
@@ -606,6 +635,12 @@ function restoreDemandInputs(
     "demandProfileType",
     demand.profileType ||
     "residential"
+  );
+
+  setFieldValue(
+    "intrahourDemandProfileType",
+    inputs.intrahourDemandProfileType ||
+    "uniform"
   );
 
   setFieldValue(
@@ -682,10 +717,43 @@ function restoreTemperatureInputs(
     inputs.networkTemperatureC
   );
 
-  setFieldValue(
-    "recirculationFlowLPerMinute",
-    inputs
-      .recirculationFlowLPerMinute
+  setFieldValueIfPresent(
+    "lossPercent",
+    inputs.lossPercent
+  );
+}
+
+
+/**
+ * Restaura las temperaturas específicas de un serpentín.
+ */
+function restoreImmersedTankInputs(
+  tankNumber,
+  tank
+) {
+  const prefix = `d${tankNumber}`;
+  const fields = {
+    NominalPrimaryInletTemperatureC:
+      tank.nominalPrimaryInletTemperatureC,
+    NominalPrimaryOutletTemperatureC:
+      tank.nominalPrimaryOutletTemperatureC,
+    NominalSecondaryInletTemperatureC:
+      tank.nominalSecondaryInletTemperatureC,
+    NominalSecondaryOutletTemperatureC:
+      tank.nominalSecondaryOutletTemperatureC,
+    ActualPrimaryInletTemperatureC:
+      tank.actualPrimaryInletTemperatureC,
+    ActualPrimaryOutletTemperatureC:
+      tank.actualPrimaryOutletTemperatureC
+  };
+
+  Object.entries(fields).forEach(
+    ([suffix, value]) => {
+      setFieldValueIfPresent(
+        `${prefix}${suffix}`,
+        value
+      );
+    }
   );
 }
 
@@ -725,9 +793,20 @@ function restoreTankInputs(
     );
 
     setFieldValue(
+      "d1ExchangerType",
+      tanks[0].exchangerType ||
+      "external"
+    );
+
+    setFieldValue(
       "d1ExchangerPowerKW",
       tanks[0]
         .exchangerPowerKW
+    );
+
+    restoreImmersedTankInputs(
+      1,
+      tanks[0]
     );
   }
 
@@ -741,9 +820,20 @@ function restoreTankInputs(
     );
 
     setFieldValue(
+      "d2ExchangerType",
+      tanks[1].exchangerType ||
+      "external"
+    );
+
+    setFieldValue(
       "d2ExchangerPowerKW",
       tanks[1]
         .exchangerPowerKW
+    );
+
+    restoreImmersedTankInputs(
+      2,
+      tanks[1]
     );
   }
 
@@ -757,6 +847,13 @@ function restoreTankInputs(
       }
     )
   );
+
+  ["d1ExchangerType", "d2ExchangerType"]
+    .forEach(id => {
+      getElement(id).dispatchEvent(
+        new Event("change", { bubbles: true })
+      );
+    });
 }
 
 
@@ -776,12 +873,43 @@ function restoreGeneratorInputs(
     inputs.startThresholdPercent
   );
 
+  setFieldValueIfPresent(
+    "generatorRampMinutes",
+    inputs.generatorRampMinutes
+  );
+
+  setFieldValueIfPresent(
+    "minimumGeneratorStartIntervalMinutes",
+    inputs.minimumGeneratorStartIntervalMinutes
+  );
+
+  setFieldValueIfPresent(
+    "generatorMinimumPowerKW",
+    inputs.generatorMinimumPowerKW
+  );
+
+  setFieldValueIfPresent(
+    "maximumBelowMinimumPowerMinutes",
+    inputs.maximumBelowMinimumPowerMinutes
+  );
+
+  const inertiaField =
+    getElement(
+      "hasSufficientGeneratorInertia"
+    );
+
+  inertiaField.checked =
+    inputs.hasSufficientGeneratorInertia !==
+    false;
+
+  inertiaField.dispatchEvent(
+    new Event("change", { bubbles: true })
+  );
+
   getElement(
     "sanitaryCheck"
   ).checked =
-    Boolean(
-      inputs.sanitaryCheck
-    );
+    inputs.sanitaryCheck !== false;
 }
 
 

@@ -23,7 +23,7 @@
  * 7. Evolución temporal: energía y potencia
  * 8. Tabla horaria de operación
  * 9. Diagnóstico
- * 10. Conclusiones y responsabilidad
+ * 10. Responsabilidad y condiciones de uso
  */
 
 
@@ -1566,7 +1566,7 @@ function drawExecutivePage(data) {
     buildExecutiveText(data),
     x + 8,
     155,
-    ReportState.contentWidth - 79,
+    ReportState.contentWidth - 16,
     {
       fontSize: 8.2,
       lineGap: 4.3,
@@ -1574,14 +1574,6 @@ function drawExecutivePage(data) {
       maxLines: 7
     }
   );
-
-  drawDonut({
-    centerX: ReportState.pageWidth - 47,
-    centerY: 168,
-    radius: 20,
-    percent: data.comfort.coveragePercent,
-    label: "Cobertura"
-  });
 
   drawSectionLabel(
     "Criterio temporal del informe",
@@ -2070,10 +2062,6 @@ function drawEnergyPage(data) {
   drawKeyValueRows(
     [
       {
-        label: "Cobertura energética",
-        value: formatPercent(data.comfort.coveragePercent)
-      },
-      {
         label: "Funcionamiento generador",
         value:
           `${formatNumber(
@@ -2109,15 +2097,7 @@ function drawEnergyPage(data) {
   drawSectionLabel("Indicadores principales", x, 137);
 
   drawDonut({
-    centerX: x + 42,
-    centerY: 184,
-    radius: 25,
-    percent: data.comfort.coveragePercent,
-    label: "Cobertura"
-  });
-
-  drawDonut({
-    centerX: x + 105,
+    centerX: x + ReportState.contentWidth / 2,
     centerY: 184,
     radius: 25,
     percent:
@@ -2464,84 +2444,22 @@ function drawDiagnosisPage(data) {
 
 
 /* ============================================================
- * PÁGINA 10 · CONCLUSIONES Y RESPONSABILIDAD
+ * PÁGINA 10 · RESPONSABILIDAD Y CONDICIONES DE USO
  * ============================================================ */
 
-function drawConclusionsPage(data) {
-  addPage("Conclusiones y responsabilidad");
+function drawResponsibilityPage() {
+  addPage("Responsabilidad y condiciones de uso");
 
   const doc = ReportState.doc;
   const colors = ACS_REPORT_CONFIG.COLORS;
   const x = ACS_REPORT_CONFIG.MARGIN.left;
 
   drawPageTitle(
-    "Conclusiones",
-    "Síntesis técnica y condiciones de uso del informe."
+    "Responsabilidad y condiciones de uso",
+    "Alcance, validación y utilización del informe."
   );
 
-  drawSectionLabel("Conclusiones de la simulación", x, 52);
-
-  let conclusions =
-    data.conclusions.filter(c=>!(JSON.stringify(c).toLowerCase().includes('recircul'))).length>0
-      ? data.conclusions.filter(c=>!(JSON.stringify(c).toLowerCase().includes('recircul')))
-      : [
-          {
-            title: "Resultado",
-            text:
-              "No se han generado conclusiones automáticas adicionales.",
-            level: "info"
-          }
-        ];
-
-  let y = 68;
-
-  conclusions.slice(0, 4).forEach(item => {
-    const normalized =
-      typeof item === "string"
-        ? {
-            title: "Observación",
-            text: item,
-            level: "info"
-          }
-        : item;
-
-    const level = normalized.level || "info";
-    const text = [
-      normalized.title,
-      normalized.text
-    ].filter(Boolean).join(": ");
-
-    drawCard(
-      x,
-      y,
-      ReportState.contentWidth,
-      24,
-      {
-        fill: getLevelBackground(level),
-        border: getLevelColor(level)
-      }
-    );
-
-    doc.setFillColor(...getLevelColor(level));
-    doc.circle(x + 7, y + 8, 2, "F");
-
-    drawParagraph(
-      text,
-      x + 13,
-      y + 8,
-      ReportState.contentWidth - 18,
-      {
-        fontSize: 7.7,
-        lineGap: 3.9,
-        color: colors.textSoft,
-        maxLines: 4
-      }
-    );
-
-    y += 28;
-  });
-
-  const liabilityY = Math.max(157, y + 3);
+  const liabilityY = 52;
 
   drawSectionLabel(
     "Cláusula de uso y responsabilidad",
@@ -2634,7 +2552,7 @@ function buildPdf(input) {
   drawEnergyAndPowerChartsPage(data);
   drawOperationTablePage(data);
   drawDiagnosisPage(data);
-  drawConclusionsPage(data);
+  drawResponsibilityPage();
 
   return ReportState.doc;
 }
