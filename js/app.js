@@ -1507,7 +1507,7 @@ function updateCustomProfileVisibility() {
  * ============================================================ */
 
 /**
- * Devuelve los IDs de los campos del serpentín de un depósito.
+ * Devuelve los IDs de caracterización térmica de un intercambiador.
  */
 function getImmersedFieldIds(
   tankNumber
@@ -1527,7 +1527,7 @@ function getImmersedFieldIds(
 
 
 /**
- * Activa o desactiva los campos específicos del serpentín.
+ * Activa o desactiva la caracterización térmica del intercambiador.
  */
 function setImmersedFieldsState(
   tankNumber,
@@ -1563,8 +1563,8 @@ function setImmersedFieldsState(
 
 
 /**
- * Actualiza la visibilidad de los campos según el tipo
- * de intercambiador seleccionado.
+ * Actualiza la visibilidad de los campos según la disponibilidad
+ * del depósito. Tanto placas como serpentines se caracterizan.
  */
 function updateExchangerVisibility(
   tankNumber
@@ -1578,18 +1578,9 @@ function updateExchangerVisibility(
     tankNumber === 1 ||
     hasTwoTanks;
 
-  const typeField =
-    tankNumber === 1
-      ? DOM.d1ExchangerType
-      : DOM.d2ExchangerType;
-
-  const isImmersed =
-    tankEnabled &&
-    typeField.value === "immersed";
-
   setImmersedFieldsState(
     tankNumber,
-    isImmersed
+    tankEnabled
   );
 }
 
@@ -1663,39 +1654,35 @@ function buildTankConfig(
       )
   };
 
-  if (
-    exchangerType === "immersed"
-  ) {
-    tank.nominalPrimaryInletTemperatureC =
-      readNumber(
-        `${prefix}NominalPrimaryInletTemperatureC`
-      );
+  tank.nominalPrimaryInletTemperatureC =
+    readNumber(
+      `${prefix}NominalPrimaryInletTemperatureC`
+    );
 
-    tank.nominalPrimaryOutletTemperatureC =
-      readNumber(
-        `${prefix}NominalPrimaryOutletTemperatureC`
-      );
+  tank.nominalPrimaryOutletTemperatureC =
+    readNumber(
+      `${prefix}NominalPrimaryOutletTemperatureC`
+    );
 
-    tank.nominalSecondaryInletTemperatureC =
-      readNumber(
-        `${prefix}NominalSecondaryInletTemperatureC`
-      );
+  tank.nominalSecondaryInletTemperatureC =
+    readNumber(
+      `${prefix}NominalSecondaryInletTemperatureC`
+    );
 
-    tank.nominalSecondaryOutletTemperatureC =
-      readNumber(
-        `${prefix}NominalSecondaryOutletTemperatureC`
-      );
+  tank.nominalSecondaryOutletTemperatureC =
+    readNumber(
+      `${prefix}NominalSecondaryOutletTemperatureC`
+    );
 
-    tank.actualPrimaryInletTemperatureC =
-      readNumber(
-        `${prefix}ActualPrimaryInletTemperatureC`
-      );
+  tank.actualPrimaryInletTemperatureC =
+    readNumber(
+      `${prefix}ActualPrimaryInletTemperatureC`
+    );
 
-    tank.actualPrimaryOutletTemperatureC =
-      readNumber(
-        `${prefix}ActualPrimaryOutletTemperatureC`
-      );
-  }
+  tank.actualPrimaryOutletTemperatureC =
+    readNumber(
+      `${prefix}ActualPrimaryOutletTemperatureC`
+    );
 
   return tank;
 }
@@ -1937,9 +1924,7 @@ function validateSimulationConfigBeforeEngine(
         );
       }
 
-      if (
-        tank.exchangerType === "immersed"
-      ) {
+      {
         if (
           tank.nominalPrimaryInletTemperatureC <=
           tank.nominalPrimaryOutletTemperatureC
@@ -3000,7 +2985,7 @@ function getSerializableAppState() {
     currentInputs;
 
   return {
-    version: "1.2.0",
+    version: "1.3.0",
 
     project:
       currentProject,

@@ -3,10 +3,10 @@
 /**
  * ============================================================
  * PRO ACS · GENERADOR DE INFORME PDF
- * Versión 3.5.0
+ * Versión 3.7.0
  * ============================================================
  *
- * Informe profesional de 10 páginas.
+ * Informe profesional de 13 páginas.
  *
  * PRINCIPIO DE MAQUETACIÓN:
  * Todo texto multilínea se dibuja línea a línea con un interlineado
@@ -15,15 +15,18 @@
  *
  * Páginas:
  * 1. Portada
- * 2. Resumen ejecutivo
- * 3. Datos de entrada
- * 4. Metodología
- * 5. Balance energético
- * 6. Evolución temporal: perfil de demanda y carga
- * 7. Evolución temporal: energía y potencia
- * 8. Tabla horaria de operación
- * 9. Diagnóstico
- * 10. Responsabilidad y condiciones de uso
+ * 2. Datos generales del proyecto
+ * 3. Demanda de ACS
+ * 4. Depósitos y temperaturas
+ * 5. Generador
+ * 6. Resultados generales
+ * 7. Balance y acumulación
+ * 8. Valoraciones
+ * 9. Evolución temporal: perfil de demanda y carga
+ * 10. Evolución temporal: energía y potencia
+ * 11. Tabla horaria de operación
+ * 12. Metodología
+ * 13. Responsabilidad y condiciones de uso
  */
 
 
@@ -32,9 +35,9 @@
  * ============================================================ */
 
 const ACS_REPORT_CONFIG = Object.freeze({
-  VERSION: "3.5.0",
+  VERSION: "3.7.0",
   SOFTWARE_VERSION: "Pro ACS 1.2",
-  PAGE_COUNT: 10,
+  PAGE_COUNT: 13,
 
   PAGE: Object.freeze({
     orientation: "portrait",
@@ -292,6 +295,7 @@ function normalizeReportData(input) {
   const comfort = safeObject(results.comfort);
   const generatorResults = safeObject(results.generator);
   const hydraulics = safeObject(results.hydraulics);
+  const heatingTimes = safeObject(report.heatingTimes);
 
   const engineAnalysis =
     input
@@ -457,6 +461,7 @@ function normalizeReportData(input) {
     comfort,
     generatorResults,
     hydraulics,
+    heatingTimes,
     tanks: safeArray(report.tanks),
     exchangers: safeArray(results.exchangers),
     conclusions: safeArray(report.conclusions),
@@ -1351,75 +1356,25 @@ function drawCoverPage(data) {
   doc.text("Agua Caliente Sanitaria", x, 65);
 
   drawTextInBox(
-    data.project.name || "Proyecto sin nombre",
+    "INFORME DE CÁLCULO Y EVALUACIÓN",
     x,
-    108,
+    122,
     ReportState.contentWidth,
-    25,
+    18,
     {
-      fontSize: 21,
-      minFontSize: 14,
+      fontSize: 17,
+      minFontSize: 13,
       style: "bold",
       color: colors.navy,
-      verticalAlign: "top",
+      align: "center",
+      verticalAlign: "middle",
       maxLines: 2
     }
   );
 
-  const location = [
-    data.project.address,
-    data.project.postalCode,
-    data.project.city
-  ].filter(Boolean).join(", ");
-
-  const metadata = [
-    ["Proyectista", data.project.designer || "—"],
-    ["Fecha del proyecto", formatDate(data.project.date)],
-    ["Ubicación", location || "—"],
-    ["Versión del informe", ACS_REPORT_CONFIG.VERSION],
-    ["Versión de la aplicación", ACS_REPORT_CONFIG.SOFTWARE_VERSION]
-  ];
-
-  let y = 144;
-
-  metadata.forEach(([label, value]) => {
-    drawTextInBox(
-      String(label).toUpperCase(),
-      x,
-      y,
-      ReportState.contentWidth,
-      6,
-      {
-        fontSize: 7.2,
-        minFontSize: 6,
-        style: "bold",
-        color: colors.muted,
-        verticalAlign: "top",
-        maxLines: 1
-      }
-    );
-
-    drawTextInBox(
-      value,
-      x,
-      y + 6,
-      ReportState.contentWidth,
-      10,
-      {
-        fontSize: 9.8,
-        minFontSize: 7.5,
-        color: colors.text,
-        verticalAlign: "top",
-        maxLines: 2
-      }
-    );
-
-    y += 20;
-  });
-
   drawCard(
     x,
-    244,
+    221,
     ReportState.contentWidth,
     29,
     {
@@ -1431,7 +1386,7 @@ function drawCoverPage(data) {
   drawTextInBox(
     "DOCUMENTO GENERADO AUTOMÁTICAMENTE",
     x + 5,
-    250,
+    227,
     ReportState.contentWidth - 10,
     7,
     {
@@ -1447,7 +1402,7 @@ function drawCoverPage(data) {
   drawParagraph(
     "Los resultados deben ser revisados y validados por el usuario o técnico responsable antes de utilizarse en decisiones de diseño, dimensionado, ejecución o explotación.",
     x + 5,
-    262,
+    239,
     ReportState.contentWidth - 10,
     {
       fontSize: 7.7,
@@ -1469,7 +1424,7 @@ function drawCoverPage(data) {
   );
 
   doc.text(
-    "Página 1 de 10",
+    `Página 1 de ${ACS_REPORT_CONFIG.PAGE_COUNT}`,
     ReportState.pageWidth - ACS_REPORT_CONFIG.MARGIN.right,
     ReportState.pageHeight - 10,
     { align: "right" }
@@ -1478,7 +1433,114 @@ function drawCoverPage(data) {
 
 
 /* ============================================================
- * PÁGINA 2 · RESUMEN
+ * PÁGINA 2 · DATOS GENERALES DEL PROYECTO
+ * ============================================================ */
+
+function drawProjectPage(data) {
+  addPage("Datos generales del proyecto");
+
+  const x = ACS_REPORT_CONFIG.MARGIN.left;
+  const colors = ACS_REPORT_CONFIG.COLORS;
+
+  drawPageTitle(
+    "Datos generales del proyecto",
+    "Identificación y localización del estudio."
+  );
+
+  const location = [
+    data.project.address,
+    data.project.postalCode,
+    data.project.city
+  ].filter(Boolean).join(", ");
+
+  drawSectionLabel("Identificación", x, 52);
+
+  drawKeyValueRows(
+    [
+      {
+        label: "Proyecto",
+        value: data.project.name || "—"
+      },
+      {
+        label: "Cliente",
+        value: data.project.client || "—"
+      },
+      {
+        label: "Proyectista",
+        value: data.project.designer || "—"
+      },
+      {
+        label: "Fecha",
+        value: formatDate(data.project.date)
+      }
+    ],
+    x,
+    68,
+    ReportState.contentWidth,
+    {
+      rowHeight: 14,
+      labelWidth: 48
+    }
+  );
+
+  drawSectionLabel("Localización", x, 137);
+
+  drawKeyValueRows(
+    [
+      {
+        label: "Dirección",
+        value: data.project.address || "—"
+      },
+      {
+        label: "Código postal",
+        value: data.project.postalCode || "—"
+      },
+      {
+        label: "Localidad",
+        value: data.project.city || "—"
+      },
+      {
+        label: "Ubicación completa",
+        value: location || "—"
+      }
+    ],
+    x,
+    153,
+    ReportState.contentWidth,
+    {
+      rowHeight: 14,
+      labelWidth: 48
+    }
+  );
+
+  drawCard(
+    x,
+    226,
+    ReportState.contentWidth,
+    43,
+    {
+      fill: colors.surface,
+      border: colors.line
+    }
+  );
+
+  drawParagraph(
+    `Software ${ACS_REPORT_CONFIG.SOFTWARE_VERSION} · Versión documental ${ACS_REPORT_CONFIG.VERSION}`,
+    x + 7,
+    239,
+    ReportState.contentWidth - 14,
+    {
+      fontSize: 8.2,
+      lineGap: 4.2,
+      color: colors.textSoft,
+      maxLines: 4
+    }
+  );
+}
+
+
+/* ============================================================
+ * PÁGINA 6 · RESULTADOS GENERALES
  * ============================================================ */
 
 function drawExecutivePage(data) {
@@ -1498,9 +1560,9 @@ function drawExecutivePage(data) {
     x,
     y: 53,
     width: cardWidth,
-    label: "Demanda",
-    value: formatEnergy(data.energy.demandKWh),
-    note: "Últimas 24 horas"
+    label: "Demanda + pérdidas",
+    value: formatEnergy(data.energy.demandPlusLossesKWh),
+    note: "Necesidad total · 24 h"
   });
 
   drawMetricCard({
@@ -1514,6 +1576,19 @@ function drawExecutivePage(data) {
       numberOrNull(data.comfort.coveragePercent) >= 90
         ? "success"
         : "warning"
+  });
+
+  drawMetricCard({
+    x: x + (cardWidth + gap) * 2,
+    y: 53,
+    width: cardWidth,
+    label: "Calentamiento total",
+    value: formatDurationMinutes(
+      data.heatingTimes
+        ?.total
+        ?.heatingTimeMinutes
+    ),
+    note: "Carga conjunta desde Tred"
   });
 
 
@@ -1976,31 +2051,6 @@ function drawMethodologyPage() {
     y += 39;
   });
 
-  drawSectionLabel("Criterios de interpretación", x, 228);
-
-  drawCard(
-    x,
-    242,
-    ReportState.contentWidth,
-    34,
-    {
-      fill: colors.blueSoft,
-      border: colors.blue
-    }
-  );
-
-  drawParagraph(
-    "Pro ACS es una herramienta de simulación y apoyo al análisis. Los resultados expresan el comportamiento del modelo bajo las condiciones introducidas y deben interpretarse junto con las características reales de la instalación, los criterios del proyectista y la normativa aplicable.",
-    x + 6,
-    251,
-    ReportState.contentWidth - 12,
-    {
-      fontSize: 8,
-      lineGap: 4.1,
-      color: colors.textSoft,
-      maxLines: 5
-    }
-  );
 }
 
 
@@ -2009,14 +2059,14 @@ function drawMethodologyPage() {
  * ============================================================ */
 
 function drawEnergyPage(data) {
-  addPage("Balance energético");
+  addPage("Balance y acumulación");
 
   const x = ACS_REPORT_CONFIG.MARGIN.left;
   const half = (ReportState.contentWidth - 8) / 2;
 
   drawPageTitle(
-    "Balance energético",
-    "Resultados agregados de las últimas 24 horas."
+    "Balance y acumulación",
+    "Resultados energéticos y funcionamiento de los depósitos durante las últimas 24 horas."
   );
 
   drawSectionLabel("Energía", x, 52, half);
@@ -2094,28 +2144,42 @@ function drawEnergyPage(data) {
     }
   );
 
-  drawSectionLabel("Indicadores principales", x, 137);
+  drawSectionLabel("Acumulación y calentamiento", x, 137);
 
-  drawDonut({
-    centerX: x + ReportState.contentWidth / 2,
-    centerY: 184,
-    radius: 25,
-    percent:
-      100 -
-      Math.max(
-        0,
-        Math.min(
-          100,
-          numberOrNull(data.energy.lossesPercentOfDemand) ?? 0
-        )
-      ),
-    label: "Energía útil"
+  const storageRows = data.tanks.map((tank, index) => [
+    tank.tankId || tank.id || `D${index + 1}`,
+    `${formatNumber(tank.volumeL, 0)} L`,
+    `${formatNumber(tank.averageEffectivePowerKW, 2)} kW`,
+    formatEnergy(tank.maximumUsefulEnergyKWh),
+    formatDurationMinutes(tank.heatingTimeMinutes),
+    formatPercent(tank.minimumLoadPercent),
+    `${formatNumber(tank.effectiveGenerationHours, 2)} h`
+  ]);
+
+  drawTable({
+    x,
+    y: 151,
+    headers: [
+      "Depósito",
+      "Volumen",
+      "Pot. disponible",
+      "Capacidad útil",
+      "Calentamiento",
+      "Carga mín.",
+      "Funcionamiento"
+    ],
+    rows: storageRows.length > 0
+      ? storageRows
+      : [["—", "—", "—", "—", "—", "—", "—"]],
+    widths: [19, 22, 29, 27, 29, 23, 29],
+    rowHeight: 10,
+    fontSize: 6.2
   });
 
     drawSectionLabel(
     "Funcionamiento de los intercambiadores",
     x,
-    226
+    203
   );
 
   const exchangerRows = data.exchangers.map((item, index) => [
@@ -2126,7 +2190,7 @@ function drawEnergyPage(data) {
 
   drawTable({
     x,
-    y: 240,
+    y: 217,
     headers: [
       "Intercambiador",
       "Funcionamiento",
@@ -2148,37 +2212,19 @@ function drawEnergyPage(data) {
  * ============================================================ */
 
 function drawDemandAndLoadChartsPage(data) {
-  addPage("Evolución temporal · Demanda y carga");
+  addPage("Evolución temporal · Carga");
 
   const x = ACS_REPORT_CONFIG.MARGIN.left;
 
   drawPageTitle(
-    "Evolución temporal",
-    "Perfil horario de demanda y estado de carga de los depósitos durante las últimas 24 horas."
-  );
-
-  drawSectionLabel(
-    "Perfil horario de demanda",
-    x,
-    48
-  );
-
-  drawChart(
-    getChartImage(
-      "demand",
-      data.demandProfile
-    ),
-    x,
-    61,
-    ReportState.contentWidth,
-    88,
-    "Gráfica del perfil horario de demanda no disponible."
+    "Evolución de la carga",
+    "Estado continuo de los depósitos durante las últimas 24 horas."
   );
 
   drawSectionLabel(
     "Carga de los depósitos",
     x,
-    160
+    52
   );
 
   drawChart(
@@ -2187,10 +2233,23 @@ function drawDemandAndLoadChartsPage(data) {
       data.charts
     ),
     x,
-    173,
+    67,
     ReportState.contentWidth,
-    88,
+    180,
     "Gráfica de carga no disponible."
+  );
+
+  drawParagraph(
+    "La escala expresa la energía almacenada respecto a la capacidad útil de cada depósito. Los máximos intraminuto que provocan la parada del generador se conservan en la representación.",
+    x,
+    260,
+    ReportState.contentWidth,
+    {
+      fontSize: 7.8,
+      lineGap: 4,
+      color: ACS_REPORT_CONFIG.COLORS.textSoft,
+      maxLines: 3
+    }
   );
 }
 
@@ -2429,7 +2488,15 @@ function drawDiagnosisPage(data) {
   );
 
   drawParagraph(
-    "El perfil horario permite identificar cuándo se concentra la demanda. La gráfica de carga muestra la respuesta de la acumulación, la energía horaria cuantifica el aporte útil de cada intercambiador y la potencia instantánea permite comprobar los periodos reales de funcionamiento y sus límites. La tabla siguiente a las gráficas completa esta lectura con el balance de cada hora.",
+    data.conclusions.length > 0
+      ? data.conclusions
+          .slice(0, 4)
+          .map(
+            conclusion =>
+              `${conclusion.title || "Conclusión"}: ${conclusion.text || ""}`
+          )
+          .join(" ")
+      : "Las valoraciones anteriores resumen el comportamiento sanitario y de confort del sistema durante el periodo analizado.",
     x + 7,
     Math.max(208, y + 31),
     ReportState.contentWidth - 14,
@@ -2544,14 +2611,17 @@ function buildPdf(input) {
   const data = normalizeReportData(input);
 
   drawCoverPage(data);
+  drawProjectPage(data);
+  drawDemandPage(data);
+  drawStoragePage(data);
+  drawGeneratorPage(data);
   drawExecutivePage(data);
-  drawInputsPage(data);
-  drawMethodologyPage(data);
   drawEnergyPage(data);
+  drawDiagnosisPage(data);
   drawDemandAndLoadChartsPage(data);
   drawEnergyAndPowerChartsPage(data);
   drawOperationTablePage(data);
-  drawDiagnosisPage(data);
+  drawMethodologyPage(data);
   drawResponsibilityPage();
 
   return ReportState.doc;
@@ -2639,4 +2709,389 @@ if (
     ACSReportError,
     ACS_REPORT_CONFIG
   };
+}
+
+
+/* ============================================================
+ * PÁGINA 3 · DEMANDA DE ACS
+ * ============================================================ */
+
+function drawDemandPage(data) {
+  addPage("Demanda de ACS");
+
+  const x = ACS_REPORT_CONFIG.MARGIN.left;
+  const half = (ReportState.contentWidth - 8) / 2;
+  const colors = ACS_REPORT_CONFIG.COLORS;
+
+  drawPageTitle(
+    "Demanda de ACS",
+    "Definición del consumo diario y de su distribución temporal."
+  );
+
+  drawSectionLabel("Datos de demanda", x, 52, half);
+
+  drawKeyValueRows(
+    [
+      {
+        label: "Perfil",
+        value: getProfileName(data.demand.profileType)
+      },
+      {
+        label: "Distribución intrahoraria",
+        value:
+          data.demand.intrahourProfileLabel ||
+          data.demand.intrahourProfileType ||
+          "Uniforme durante la hora"
+      },
+      {
+        label: "Número de personas",
+        value: formatNumber(data.demand.numberOfPeople, 0)
+      },
+      {
+        label: "Consumo unitario",
+        value: `${formatNumber(data.demand.unitVolumeAt60CPerPersonDayL, 2)} L/persona·día`
+      },
+      {
+        label: "Demanda diaria",
+        value: `${formatNumber(data.demand.totalDailyDemandAt60CL, 2)} L/día a 60 °C`
+      }
+    ],
+    x,
+    68,
+    half,
+    {
+      rowHeight: 14,
+      labelWidth: 42
+    }
+  );
+
+  drawSectionLabel(
+    "Referencia energética",
+    x + half + 8,
+    52,
+    half
+  );
+
+  drawKeyValueRows(
+    [
+      {
+        label: "Demanda energética",
+        value: formatEnergy(data.energy.demandKWh)
+      },
+      {
+        label: "Temperatura de referencia",
+        value: "60 °C"
+      },
+      {
+        label: "Modelo temporal",
+        value: "48 h · paso 1 min"
+      },
+      {
+        label: "Periodo presentado",
+        value: "Últimas 24 h"
+      }
+    ],
+    x + half + 8,
+    68,
+    half,
+    {
+      rowHeight: 14,
+      labelWidth: 42
+    }
+  );
+
+  drawSectionLabel("Perfil horario de demanda", x, 143);
+
+  drawChart(
+    getChartImage("demand", data.demandProfile),
+    x,
+    157,
+    ReportState.contentWidth,
+    102,
+    "Gráfica del perfil horario de demanda no disponible."
+  );
+
+  drawParagraph(
+    "La distribución horaria conserva la demanda diaria total y define en qué momentos se concentra el consumo utilizado por la simulación.",
+    x,
+    271,
+    ReportState.contentWidth,
+    {
+      fontSize: 7.7,
+      lineGap: 4,
+      color: colors.textSoft,
+      maxLines: 2
+    }
+  );
+}
+
+
+/* ============================================================
+ * PÁGINA 4 · DEPÓSITOS Y TEMPERATURAS
+ * ============================================================ */
+
+function drawStoragePage(data) {
+  addPage("Depósitos y temperaturas");
+
+  const x = ACS_REPORT_CONFIG.MARGIN.left;
+  const third = (ReportState.contentWidth - 10) / 3;
+
+  drawPageTitle(
+    "Depósitos y temperaturas",
+    "Configuración de acumulación e intercambiadores."
+  );
+
+  drawSectionLabel("Temperaturas de proyecto", x, 52);
+
+  const temperatureItems = [
+    {
+      x,
+      label: "ACUMULACIÓN",
+      value: formatTemperature(data.temperatures.storageTemperatureC)
+    },
+    {
+      x: x + third + 5,
+      label: "USO",
+      value: formatTemperature(data.temperatures.useTemperatureC)
+    },
+    {
+      x: x + (third + 5) * 2,
+      label: "RED",
+      value: formatTemperature(data.temperatures.networkTemperatureC)
+    }
+  ];
+
+  temperatureItems.forEach(item => {
+    drawMetricCard({
+      x: item.x,
+      y: 67,
+      width: third,
+      label: item.label,
+      value: item.value,
+      note: "Temperatura configurada"
+    });
+  });
+
+  drawSectionLabel("Configuración de acumuladores", x, 113);
+
+  const tankRows = data.tanks.map((tank, index) => [
+    tank.tankId || tank.id || `D${index + 1}`,
+    `${formatNumber(tank.volumeL, 0)} L`,
+    `${formatNumber(tank.exchangerPowerKW, 2)} kW`,
+    formatEnergy(tank.maximumUsefulEnergyKWh),
+    formatDurationMinutes(tank.heatingTimeMinutes),
+    formatPercent(tank.minimumLoadPercent)
+  ]);
+
+  if (tankRows.length > 0) {
+    tankRows.push([
+      "Total",
+      `${formatNumber(
+        data.tanks.reduce(
+          (total, tank) =>
+            total + (numberOrNull(tank.volumeL) || 0),
+          0
+        ),
+        0
+      )} L`,
+      `${formatNumber(
+        data.tanks.reduce(
+          (total, tank) =>
+            total + (numberOrNull(tank.exchangerPowerKW) || 0),
+          0
+        ),
+        2
+      )} kW`,
+      formatEnergy(
+        data.tanks.reduce(
+          (total, tank) =>
+            total + (numberOrNull(tank.maximumUsefulEnergyKWh) || 0),
+          0
+        )
+      ),
+      formatDurationMinutes(
+        data.heatingTimes
+          ?.total
+          ?.heatingTimeMinutes
+      ),
+      "—"
+    ]);
+  }
+
+  drawTable({
+    x,
+    y: 128,
+    headers: [
+      "Depósito",
+      "Volumen",
+      "Potencia",
+      "Capacidad útil",
+      "Calentamiento",
+      "Carga mínima"
+    ],
+    rows: tankRows.length > 0
+      ? tankRows
+      : [["—", "—", "—", "—", "—", "—"]],
+    widths: [24, 27, 29, 34, 38, 26],
+    rowHeight: 11,
+    fontSize: 7
+  });
+
+  drawSectionLabel("Caracterización de intercambiadores", x, 181);
+
+  const exchangerRows = data.tanks.map((tank, index) => [
+    tank.tankId || tank.id || `D${index + 1}`,
+    tank.exchangerType === "immersed" ? "Serpentín" : "Placas",
+    `${formatNumber(tank.nominalPrimaryInletTemperatureC, 1)}/${formatNumber(tank.nominalPrimaryOutletTemperatureC, 1)} °C`,
+    `${formatNumber(tank.actualPrimaryInletTemperatureC, 1)}/${formatNumber(tank.actualPrimaryOutletTemperatureC, 1)} °C`,
+    `${formatNumber(tank.nominalSecondaryInletTemperatureC, 1)}/${formatNumber(tank.nominalSecondaryOutletTemperatureC, 1)} °C`
+  ]);
+
+  drawTable({
+    x,
+    y: 196,
+    headers: [
+      "Depósito",
+      "Tipo",
+      "Primario nominal",
+      "Primario real",
+      "Secundario nominal"
+    ],
+    rows: exchangerRows.length > 0
+      ? exchangerRows
+      : [["—", "—", "—", "—", "—"]],
+    widths: [25, 31, 42, 39, 41],
+    rowHeight: 11,
+    fontSize: 6.8
+  });
+}
+
+
+/* ============================================================
+ * PÁGINA 5 · GENERADOR
+ * ============================================================ */
+
+function drawGeneratorPage(data) {
+  addPage("Generador");
+
+  const x = ACS_REPORT_CONFIG.MARGIN.left;
+  const half = (ReportState.contentWidth - 8) / 2;
+  const colors = ACS_REPORT_CONFIG.COLORS;
+
+  drawPageTitle(
+    "Generador",
+    "Potencia disponible, criterio de control y circuito de recirculación."
+  );
+
+  drawSectionLabel("Configuración", x, 52, half);
+
+  drawKeyValueRows(
+    [
+      {
+        label: "Potencia nominal",
+        value: `${formatNumber(data.generator.powerKW, 2)} kW`
+      },
+      {
+        label: "Umbral de arranque",
+        value: formatPercent(data.generator.startThresholdPercent)
+      },
+      {
+        label: "Comprobación sanitaria",
+        value: data.inputSummary.sanitaryCheck ? "Activada" : "No solicitada"
+      },
+      {
+        label: "Número de depósitos",
+        value: formatNumber(firstDefined(data.inputSummary.tankCount, data.tanks.length), 0)
+      }
+    ],
+    x,
+    68,
+    half,
+    {
+      rowHeight: 14,
+      labelWidth: 43
+    }
+  );
+
+  drawSectionLabel("Recirculación", x + half + 8, 52, half);
+
+  drawKeyValueRows(
+    [
+      {
+        label: "Pérdidas configuradas",
+        value: formatPercent(firstDefined(data.recirculation.lossPercent, data.inputSummary.lossPercent, data.energy.lossesPercentOfDemand))
+      },
+      {
+        label: "Caudal total de retorno",
+        value: formatFlow(firstDefined(data.recirculation.flowLPerMinute, data.hydraulics.totalReturnFlowLPerMinute))
+      },
+      {
+        label: "Retorno por depósitos",
+        value: formatFlow(data.hydraulics.averageTankReturnFlowLPerMinute)
+      },
+      {
+        label: "Pérdidas del periodo",
+        value: formatEnergy(data.energy.lossesKWh)
+      }
+    ],
+    x + half + 8,
+    68,
+    half,
+    {
+      rowHeight: 14,
+      labelWidth: 43
+    }
+  );
+
+  drawSectionLabel("Criterio de funcionamiento", x, 143);
+
+  drawCard(
+    x,
+    158,
+    ReportState.contentWidth,
+    66,
+    {
+      fill: colors.blueSoft,
+      border: colors.blue
+    }
+  );
+
+  drawParagraph(
+    "El motor resuelve de forma continua la demanda, la mezcla a temperatura de uso, la recirculación y las pérdidas energéticas. En cada subintervalo actualiza la energía almacenada y la temperatura de salida de los depósitos. Cuando la carga alcanza el umbral configurado, activa el generador respetando la prioridad entre D2 y D1. La potencia absorbida queda limitada por el generador, la potencia térmica disponible de cada intercambiador y la capacidad restante hasta Tacum. El ciclo termina al completar la carga o cuando actúan las condiciones de parada definidas, manteniendo en todo momento los balances hidráulicos y energéticos.",
+    x + 8,
+    174,
+    ReportState.contentWidth - 16,
+    {
+      fontSize: 7.7,
+      lineGap: 3.9,
+      color: colors.textSoft,
+      maxLines: 10
+    }
+  );
+
+  drawSectionLabel("Modelo temporal", x, 240);
+
+  drawKeyValueRows(
+    [
+      {
+        label: "Duración total",
+        value: "48 h"
+      },
+      {
+        label: "Paso publicado",
+        value: "1 min"
+      },
+      {
+        label: "Periodo analizado",
+        value: "Últimas 24 h"
+      }
+    ],
+    x,
+    254,
+    ReportState.contentWidth,
+    {
+      rowHeight: 9,
+      labelWidth: 50
+    }
+  );
 }

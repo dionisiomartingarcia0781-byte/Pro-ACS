@@ -49,7 +49,7 @@ const ACS_BLOCK7_CONSTANTS =
       1e-9,
 
     VERSION:
-      "1.2.0"
+      "1.3.0"
   });
 
 
@@ -523,8 +523,6 @@ function createProjectInformation(
 /**
  * Calcula el tiempo teórico de calentamiento de un depósito.
  *
- * t = Emax / Pintercambiador
- *
  * Se calcula:
  *
  * - desde Tred;
@@ -532,10 +530,12 @@ function createProjectInformation(
  * - sin consumo;
  * - sin recirculación;
  * - sin pérdidas;
- * - con potencia constante.
+ * - actualizando la potencia efectiva del intercambiador durante
+ *   todo el proceso de carga.
  */
 function calculateTankHeatingTime(
-  tankState
+  tankState,
+  options = {}
 ) {
   if (
     !tankState ||
@@ -560,7 +560,7 @@ function calculateTankHeatingTime(
       0
     );
 
-  const effectiveExchangerPowerKW =
+  const initialEffectiveExchangerPowerKW =
     finiteOrFallback(
       tankState
         .effectiveExchangerPowerKW,
@@ -571,22 +571,110 @@ function calculateTankHeatingTime(
     tankState.exchangerType ||
     "plate";
 
-  const canHeat =
-    exchangerPowerKW > 0;
+  const dependencies =
+    getSystemHeatingDependencies();
 
-  /*
-   * El tiempo teórico se mantiene referido a la potencia nominal,
-   * porque representa el par volumen-potencia de catálogo.
-   *
-   * La pérdida de rendimiento del serpentín se informa por separado
-   * mediante la potencia efectiva media del periodo.
-   */
+  const storageTemperatureC =
+    finiteOrFallback(
+      options.storageTemperatureC,
+      NaN
+    );
+
+  const networkTemperatureC =
+    finiteOrFallback(
+      options.networkTemperatureC,
+      NaN
+    );
+
+  const maximumMinutes =
+    isFiniteNumber(options.maximumMinutes)
+      ? Math.max(
+          1,
+          Math.floor(options.maximumMinutes)
+        )
+      : 7 * 24 * 60;
+
+  const canSimulate =
+    exchangerPowerKW > 0 &&
+    dependencies &&
+    isFiniteNumber(storageTemperatureC) &&
+    isFiniteNumber(networkTemperatureC);
+
+  let heatingTimeMinutes = null;
+  let finalEffectiveExchangerPowerKW =
+    initialEffectiveExchangerPowerKW;
+
+  if (canSimulate) {
+    const tank =
+      new dependencies.ACSTank({
+        id: tankState.id,
+        volumeL: tankState.volumeL,
+        exchangerType,
+        exchangerPowerKW,
+        storageTemperatureC,
+        networkTemperatureC,
+        initialLoadPercent: 0,
+        nominalPrimaryInletTemperatureC:
+          tankState
+            .nominalPrimaryInletTemperatureC,
+        nominalPrimaryOutletTemperatureC:
+          tankState
+            .nominalPrimaryOutletTemperatureC,
+        nominalSecondaryInletTemperatureC:
+          tankState
+            .nominalSecondaryInletTemperatureC,
+        nominalSecondaryOutletTemperatureC:
+          tankState
+            .nominalSecondaryOutletTemperatureC,
+        actualPrimaryInletTemperatureC:
+          tankState
+            .actualPrimaryInletTemperatureC,
+        actualPrimaryOutletTemperatureC:
+          tankState
+            .actualPrimaryOutletTemperatureC
+      });
+
+    let elapsedMinutes = 0;
+
+    while (
+      elapsedMinutes < maximumMinutes &&
+      !tank.isFull
+    ) {
+      const generation =
+        tank.applyPower(
+          exchangerPowerKW,
+          1
+        );
+
+      if (
+        generation.absorbedEnergyKWh <=
+        ACS_BLOCK7_CONSTANTS
+          .ENERGY_EPSILON_KWH
+      ) {
+        break;
+      }
+
+      elapsedMinutes +=
+        tank.isFull
+          ? generation.effectiveMinutes
+          : 1;
+    }
+
+    if (tank.isFull) {
+      heatingTimeMinutes =
+        elapsedMinutes;
+    }
+
+    finalEffectiveExchangerPowerKW =
+      tank.effectiveExchangerPowerKW;
+  }
+
+  const canHeat =
+    heatingTimeMinutes !== null;
+
   const heatingTimeHours =
     canHeat
-      ? (
-          maximumUsefulEnergyKWh /
-          exchangerPowerKW
-        )
+      ? heatingTimeMinutes / 60
       : null;
 
   return {
@@ -600,7 +688,10 @@ function calculateTankHeatingTime(
 
     exchangerPowerKW,
 
-    effectiveExchangerPowerKW,
+    effectiveExchangerPowerKW:
+      initialEffectiveExchangerPowerKW,
+
+    finalEffectiveExchangerPowerKW,
 
     maximumUsefulEnergyKWh,
 
@@ -608,10 +699,7 @@ function calculateTankHeatingTime(
 
     heatingTimeHours,
 
-    heatingTimeMinutes:
-      heatingTimeHours === null
-        ? null
-        : heatingTimeHours * 60
+    heatingTimeMinutes
   };
 }
 
@@ -895,7 +983,19 @@ function createHeatingTimeResults(
 
   const tanks =
     tankStates.map(
-      calculateTankHeatingTime
+      tankState =>
+        calculateTankHeatingTime(
+          tankState,
+          {
+            storageTemperatureC:
+              context.config
+                .storageTemperatureC,
+
+            networkTemperatureC:
+              context.config
+                .networkTemperatureC
+          }
+        )
     );
 
   const systemHeating =
@@ -943,12 +1043,12 @@ function createHeatingTimeResults(
     },
 
     note:
-      "Los tiempos individuales se calculan desde la temperatura de red hasta la temperatura de acumulación, sin consumos, recirculación ni pérdidas y tomando como referencia la potencia nominal de cada intercambiador.",
+      "Los tiempos individuales se simulan desde la temperatura de red hasta la temperatura de acumulación, sin consumos, recirculación ni pérdidas, actualizando durante toda la carga la potencia efectiva de cada intercambiador.",
 
     totalNote:
       systemHeating.reachedFullLoad
         ? (
-            "El tiempo total del sistema se obtiene mediante una simulación conjunta desde depósitos vacíos, respetando la potencia del generador, la prioridad de carga, la potencia disponible de cada intercambiador y la corrección dinámica de los serpentines."
+            "El tiempo total del sistema se obtiene mediante una simulación conjunta desde depósitos vacíos, respetando la potencia del generador, la prioridad de carga, la potencia disponible y la corrección dinámica de cada intercambiador."
           )
         : (
             "No ha sido posible determinar un tiempo total hasta el 100 % porque el sistema no ha completado la carga en la simulación teórica conjunta."
@@ -2463,13 +2563,39 @@ function createChartData(
       tankId
     ] =
       minutes.map(
-        minute =>
-          finiteOrFallback(
-            minute
-              .finalTankStates[tankIndex]
-              ?.loadPercent,
-            0
-          )
+        minute => {
+          const finalLoadPercent =
+            finiteOrFallback(
+              minute
+                .finalTankStates[tankIndex]
+                ?.loadPercent,
+              0
+            );
+
+          /*
+           * El control puede alcanzar el 100 % y detener el generador
+           * dentro del minuto. Después, el consumo y la recirculación
+           * del tiempo restante hacen que el estado publicado al final
+           * del minuto vuelva a quedar por debajo del 100 %.
+           *
+           * La gráfica debe conservar ese máximo instantáneo real;
+           * de lo contrario parece que el generador se detiene antes de
+           * alcanzar Tacum aunque el ciclo interno sea correcto.
+           */
+          const reachedFullLoadDuringMinute =
+            minute.generation
+              ?.stoppedDuringMinute === true &&
+            finiteOrFallback(
+              minute.generation
+                ?.tankResults?.[tankIndex]
+                ?.effectiveMinutes,
+              0
+            ) > 0;
+
+          return reachedFullLoadDuringMinute
+            ? 100
+            : finalLoadPercent;
+        }
       );
   }
 
@@ -2657,19 +2783,24 @@ function createChartData(
  * ============================================================ */
 
 /**
- * Crea una valoración específica para los serpentines sumergidos.
+ * Crea una valoración térmica para placas y serpentines.
  */
 function createExchangerAssessments(
   tanks
 ) {
   return tanks
-    .filter(
-      tank =>
-        tank.exchangerType ===
-        "immersed"
-    )
     .map(
       tank => {
+        const typeLabel =
+          tank.exchangerType === "immersed"
+            ? "Serpentín sumergido"
+            : "Intercambiador de placas";
+
+        const operationDescription =
+          tank.exchangerType === "immersed"
+            ? "el calentamiento progresivo de la zona inferior que rodea al serpentín"
+            : "el calentamiento progresivo del agua aspirada desde la zona inferior";
+
         const averageFactor =
           clamp(
             finiteOrFallback(
@@ -2702,7 +2833,7 @@ function createExchangerAssessments(
             tank.exchangerType,
 
           label:
-            "Serpentín sumergido",
+            typeLabel,
 
           nominalPowerKW:
             tank.exchangerPowerKW,
@@ -2723,7 +2854,7 @@ function createExchangerAssessments(
           message:
             hasRelevantDerating
               ? (
-                  `El serpentín del depósito ${tank.tankId} presenta una potencia efectiva media de ${formatNumber(
+                  `El ${typeLabel.toLowerCase()} del depósito ${tank.tankId} presenta una potencia disponible media de ${formatNumber(
                     tank.averageEffectivePowerKW,
                     2
                   )} kW frente a ${formatNumber(
@@ -2732,19 +2863,19 @@ function createExchangerAssessments(
                   )} kW nominales, lo que supone una reducción media del ${formatNumber(
                     deratingPercent,
                     1
-                  )} %. Esta disminución se debe al calentamiento progresivo del tercio inferior del depósito y a las condiciones reales del primario.`
+                  )} %. Esta disminución se debe a ${operationDescription} y a las condiciones reales del primario.`
                 )
               : (
-                  `El serpentín del depósito ${tank.tankId} mantiene durante el periodo una potencia efectiva media próxima a su potencia nominal, sin una pérdida de rendimiento relevante.`
+                  `El ${typeLabel.toLowerCase()} del depósito ${tank.tankId} mantiene durante el periodo una potencia disponible media próxima a su potencia nominal, sin una pérdida de rendimiento relevante.`
                 ),
 
           reportText:
             hasRelevantDerating
               ? (
-                  `En el depósito ${tank.tankId}, equipado con serpentín sumergido, la potencia nominal declarada es de ${formatNumber(
+                  `En el depósito ${tank.tankId}, equipado con ${typeLabel.toLowerCase()}, la potencia nominal declarada es de ${formatNumber(
                     tank.exchangerPowerKW,
                     2
-                  )} kW y la potencia efectiva media calculada durante las últimas 24 horas es de ${formatNumber(
+                  )} kW y la potencia disponible media calculada durante las últimas 24 horas es de ${formatNumber(
                     tank.averageEffectivePowerKW,
                     2
                   )} kW. El factor térmico medio es ${formatNumber(
@@ -2753,10 +2884,10 @@ function createExchangerAssessments(
                   )}, equivalente a una reducción media de potencia del ${formatNumber(
                     deratingPercent,
                     1
-                  )} %. La reducción responde al menor salto térmico disponible cuando se calienta la zona inferior del acumulador y a las temperaturas reales de ida y retorno del primario.`
+                  )} %. La reducción responde al menor salto térmico disponible por ${operationDescription} y a las temperaturas reales de ida y retorno del primario.`
                 )
               : (
-                  `En el depósito ${tank.tankId}, equipado con serpentín sumergido, la potencia efectiva media se mantiene próxima a la potencia nominal durante el periodo analizado.`
+                  `En el depósito ${tank.tankId}, equipado con ${typeLabel.toLowerCase()}, la potencia disponible media se mantiene próxima a la potencia nominal durante el periodo analizado.`
                 )
         };
       }
@@ -3408,32 +3539,21 @@ function renderGeneralResults(
       cards.push(
         createResultCardHtml(
           `Intercambiador ${exchanger.tankId}`,
-          exchanger.type === "immersed"
-            ? `${formatNumber(
-                exchanger.averageEffectivePowerKW,
-                2
-              )} kW`
-            : `${formatNumber(
-                exchanger.runningHours,
-                2
-              )} h`,
+          `${formatNumber(
+            exchanger.averageEffectivePowerKW,
+            2
+          )} kW`,
 
-          exchanger.type === "immersed"
-            ? (
-                `${formatNumber(
-                  exchanger.nominalPowerKW,
-                  2
-                )} kW nominales · reducción media ${formatNumber(
-                  exchanger.deratingPercent,
-                  1
-                )} %.`
-              )
-            : (
-                `${formatNumber(
-                  exchanger.generatedEnergyKWh,
-                  2
-                )} kWh generados.`
-              )
+          `${formatNumber(
+            exchanger.nominalPowerKW,
+            2
+          )} kW nominales · reducción media ${formatNumber(
+            exchanger.deratingPercent,
+            1
+          )} % · ${formatNumber(
+            exchanger.generatedEnergyKWh,
+            2
+          )} kWh generados.`
         )
       );
     }

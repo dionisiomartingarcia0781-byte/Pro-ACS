@@ -26,7 +26,7 @@
 const ACS_PROJECT_STORAGE_CONFIG =
   Object.freeze({
     FILE_VERSION:
-      "1.2.0",
+      "1.3.0",
 
     FILE_EXTENSION:
       ".acs.json",
@@ -725,7 +725,7 @@ function restoreTemperatureInputs(
 
 
 /**
- * Restaura las temperaturas específicas de un serpentín.
+ * Restaura la caracterización térmica de placas y serpentines.
  */
 function restoreImmersedTankInputs(
   tankNumber,
@@ -795,7 +795,7 @@ function restoreTankInputs(
     setFieldValue(
       "d1ExchangerType",
       tanks[0].exchangerType ||
-      "external"
+      "plate"
     );
 
     setFieldValue(
@@ -822,7 +822,7 @@ function restoreTankInputs(
     setFieldValue(
       "d2ExchangerType",
       tanks[1].exchangerType ||
-      "external"
+      "plate"
     );
 
     setFieldValue(

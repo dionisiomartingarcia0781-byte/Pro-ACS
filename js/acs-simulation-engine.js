@@ -49,6 +49,27 @@ const ACS_CONSTANTS = Object.freeze({
    */
   IMMERSED_EXCHANGER_MAX_CORRECTION_FACTOR: 1,
 
+  /**
+   * Penalización máxima adicional del serpentín cuando la zona
+   * inferior alcanza el 100 % de carga. La curva es deliberadamente
+   * moderada: diferencia ambos intercambiadores sin convertir el
+   * serpentín en una solución artificialmente ineficiente.
+   */
+  IMMERSED_SATURATION_MAX_PENALTY: 0.06,
+
+  /**
+   * Exponente de la saturación local. Un valor mayor que uno conserva
+   * el comportamiento en frío y concentra la penalización al acercarse
+   * el depósito a la temperatura de acumulación.
+   */
+  IMMERSED_SATURATION_EXPONENT: 1.5,
+
+  /**
+   * Ningún intercambiador supera la potencia nominal declarada.
+   * Se conserva la constante anterior por compatibilidad.
+   */
+  EXCHANGER_MAX_CORRECTION_FACTOR: 1,
+
   DEFAULT_CONVERGENCE_TOLERANCE: 1e-9,
   DEFAULT_MAX_ITERATIONS: 100
 });
@@ -376,16 +397,60 @@ function cloneObject(value) {
   );
 }
 
+
+/**
+ * Diferencia media logarítmica de temperaturas.
+ *
+ * Si alguno de los saltos terminales no es positivo, no existe
+ * una transferencia térmica válida en las condiciones indicadas.
+ */
+function calculateLogMeanTemperatureDifference(
+  firstDifferenceC,
+  secondDifferenceC
+) {
+  if (
+    !isFiniteNumber(firstDifferenceC) ||
+    !isFiniteNumber(secondDifferenceC) ||
+    firstDifferenceC <= 0 ||
+    secondDifferenceC <= 0
+  ) {
+    return 0;
+  }
+
+  if (
+    Math.abs(
+      firstDifferenceC -
+      secondDifferenceC
+    ) <=
+    ACS_CONSTANTS
+      .DEFAULT_CONVERGENCE_TOLERANCE
+  ) {
+    return (
+      firstDifferenceC +
+      secondDifferenceC
+    ) / 2;
+  }
+
+  return (
+    (firstDifferenceC - secondDifferenceC) /
+    Math.log(
+      firstDifferenceC /
+      secondDifferenceC
+    )
+  );
+}
+
 /**
  * Valida y normaliza los datos específicos del intercambiador.
  *
- * Para placas no se necesitan temperaturas adicionales.
- *
- * Para serpentín se define:
+ * Para serpentín y placas se define:
  * - potencia nominal;
  * - primario nominal;
  * - secundario nominal;
  * - primario real.
+ *
+ * Las placas antiguas sin caracterización térmica conservan, por
+ * compatibilidad, el comportamiento nominal anterior.
  */
 function normalizeTankExchangerConfig(
   config,
@@ -403,10 +468,37 @@ function normalizeTankExchangerConfig(
       `${namePrefix}.exchangerPowerKW`
     );
 
+  const thermalValues = [
+    config.nominalPrimaryInletTemperatureC,
+    config.nominalPrimaryOutletTemperatureC,
+    config.nominalSecondaryInletTemperatureC,
+    config.nominalSecondaryOutletTemperatureC,
+    config.actualPrimaryInletTemperatureC,
+    config.actualPrimaryOutletTemperatureC
+  ];
+
+  const hasCompleteThermalCharacterization =
+    thermalValues.every(isFiniteNumber);
+
+  const hasAnyThermalCharacterization =
+    thermalValues.some(
+      value =>
+        value !== undefined &&
+        value !== null &&
+        value !== ""
+    );
+
   if (
     exchangerType ===
-    ACS_EXCHANGER_TYPES.PLATE
+      ACS_EXCHANGER_TYPES.PLATE &&
+    !hasCompleteThermalCharacterization
   ) {
+    if (hasAnyThermalCharacterization) {
+      throw new ACSSimulationError(
+        `${namePrefix}: la caracterización térmica de la placa debe incluir las seis temperaturas nominales y reales.`
+      );
+    }
+
     return {
       exchangerType,
       exchangerPowerKW,
@@ -566,7 +658,7 @@ class ACSTank {
    * @param {number} config.networkTemperatureC
    * @param {number} [config.initialLoadPercent=100]
    *
-   * Solo para "immersed":
+   * Caracterización térmica para "immersed" y "plate":
    * @param {number} config.nominalPrimaryInletTemperatureC
    * @param {number} config.nominalPrimaryOutletTemperatureC
    * @param {number} config.nominalSecondaryInletTemperatureC
@@ -656,6 +748,24 @@ class ACSTank {
     this.actualPrimaryOutletTemperatureC =
       exchangerConfig
         .actualPrimaryOutletTemperatureC;
+
+    if (
+      isFiniteNumber(
+        this.actualPrimaryInletTemperatureC
+      ) &&
+      this.actualPrimaryInletTemperatureC <=
+        this.storageTemperatureC
+    ) {
+      throw new ACSSimulationError(
+        `${this.id}: la ida real del primario debe ser mayor que la temperatura de acumulación para poder alcanzar el 100 % de carga.`,
+        {
+          actualPrimaryInletTemperatureC:
+            this.actualPrimaryInletTemperatureC,
+          storageTemperatureC:
+            this.storageTemperatureC
+        }
+      );
+    }
 
     const initialLoadPercent =
       config.initialLoadPercent === undefined
@@ -845,8 +955,12 @@ class ACSTank {
    */
   get nominalPrimaryMeanTemperatureC() {
     if (
-      this.exchangerType !==
-      ACS_EXCHANGER_TYPES.IMMERSED
+      !isFiniteNumber(
+        this.nominalPrimaryInletTemperatureC
+      ) ||
+      !isFiniteNumber(
+        this.nominalPrimaryOutletTemperatureC
+      )
     ) {
       return null;
     }
@@ -862,8 +976,12 @@ class ACSTank {
    */
   get nominalSecondaryMeanTemperatureC() {
     if (
-      this.exchangerType !==
-      ACS_EXCHANGER_TYPES.IMMERSED
+      !isFiniteNumber(
+        this.nominalSecondaryInletTemperatureC
+      ) ||
+      !isFiniteNumber(
+        this.nominalSecondaryOutletTemperatureC
+      )
     ) {
       return null;
     }
@@ -880,10 +998,27 @@ class ACSTank {
    */
   get nominalTemperatureDifferenceC() {
     if (
-      this.exchangerType !==
-      ACS_EXCHANGER_TYPES.IMMERSED
+      !isFiniteNumber(
+        this.nominalPrimaryMeanTemperatureC
+      ) ||
+      !isFiniteNumber(
+        this.nominalSecondaryMeanTemperatureC
+      )
     ) {
       return null;
+    }
+
+    if (
+      this.exchangerType ===
+      ACS_EXCHANGER_TYPES.PLATE
+    ) {
+      return calculateLogMeanTemperatureDifference(
+        this.nominalPrimaryInletTemperatureC -
+          this.nominalSecondaryOutletTemperatureC,
+
+        this.nominalPrimaryOutletTemperatureC -
+          this.nominalSecondaryInletTemperatureC
+      );
     }
 
     return (
@@ -897,8 +1032,12 @@ class ACSTank {
    */
   get actualPrimaryMeanTemperatureC() {
     if (
-      this.exchangerType !==
-      ACS_EXCHANGER_TYPES.IMMERSED
+      !isFiniteNumber(
+        this.actualPrimaryInletTemperatureC
+      ) ||
+      !isFiniteNumber(
+        this.actualPrimaryOutletTemperatureC
+      )
     ) {
       return null;
     }
@@ -911,19 +1050,58 @@ class ACSTank {
 
   /**
    * Salto térmico real simplificado entre el primario y la zona
-   * del depósito ocupada por el serpentín.
+   * inferior del depósito.
+   *
+   * - Serpentín: agua que rodea al intercambiador.
+   * - Placas: agua aspirada desde la toma inferior.
    */
   get actualTemperatureDifferenceC() {
     if (
-      this.exchangerType !==
-      ACS_EXCHANGER_TYPES.IMMERSED
+      !isFiniteNumber(
+        this.actualPrimaryMeanTemperatureC
+      )
     ) {
       return null;
     }
 
+    const correctionFactor =
+      this.thermalCorrectionFactor;
+
+    const dynamicPrimaryOutletTemperatureC =
+      this.actualPrimaryInletTemperatureC -
+      correctionFactor *
+      (
+        this.actualPrimaryInletTemperatureC -
+        this.actualPrimaryOutletTemperatureC
+      );
+
+    if (
+      this.exchangerType ===
+      ACS_EXCHANGER_TYPES.PLATE
+    ) {
+      const dynamicSecondaryOutletTemperatureC =
+        this.lowerZoneTemperatureC +
+        correctionFactor *
+        (
+          this.nominalSecondaryOutletTemperatureC -
+          this.nominalSecondaryInletTemperatureC
+        );
+
+      return calculateLogMeanTemperatureDifference(
+        this.actualPrimaryInletTemperatureC -
+          dynamicSecondaryOutletTemperatureC,
+
+        dynamicPrimaryOutletTemperatureC -
+          this.lowerZoneTemperatureC
+      );
+    }
+
     return Math.max(
       0,
-      this.actualPrimaryMeanTemperatureC -
+      (
+        this.actualPrimaryInletTemperatureC +
+        dynamicPrimaryOutletTemperatureC
+      ) / 2 -
         this.lowerZoneTemperatureC
     );
   }
@@ -931,17 +1109,19 @@ class ACSTank {
   /**
    * Factor de corrección térmica.
    *
-   * Para placas:
-   * factor = 1
-   *
-   * Para serpentín:
+   * Para serpentín y placas caracterizadas:
    * factor =
    * clamp(ΔTreal / ΔTnom, 0, 1)
+   *
+   * Una placa antigua sin temperaturas conserva factor = 1.
    */
   get thermalCorrectionFactor() {
     if (
       this.exchangerType ===
-      ACS_EXCHANGER_TYPES.PLATE
+        ACS_EXCHANGER_TYPES.PLATE &&
+      !isFiniteNumber(
+        this.nominalTemperatureDifferenceC
+      )
     ) {
       return 1;
     }
@@ -958,21 +1138,198 @@ class ACSTank {
       return 0;
     }
 
-    return clamp(
-      this.actualTemperatureDifferenceC /
-        nominalDifference,
+    const primaryTemperatureDropC =
+      this.actualPrimaryInletTemperatureC -
+      this.actualPrimaryOutletTemperatureC;
 
-      0,
+    if (
+      this.exchangerType ===
+      ACS_EXCHANGER_TYPES.IMMERSED
+    ) {
+      /*
+       * Serpentín sumergido.
+       *
+       * La potencia disponible se hace proporcional a la fuerza
+       * impulsora local entre la ida primaria y el agua que rodea
+       * al serpentín en la zona inferior del depósito:
+       *
+       *              Tida,real - Tzona,baja
+       * f = ------------------------------------------------
+       *              Tida,nom - Tentrada,sec,nom
+       *
+       * Con ello:
+       *
+       * - en las condiciones nominales se conserva f = 1;
+       * - la potencia comienza a reducirse desde que la ida real
+       *   tiene menor fuerza impulsora que la nominal;
+       * - la saturación del agua que rodea al serpentín penaliza
+       *   progresivamente el intercambio durante la carga;
+       * - mientras Tida,real sea mayor que Tzona,baja permanece
+       *   una potencia residual y el intercambio no tiende a cero
+       *   antes de alcanzar la temperatura de la ida primaria.
+       */
+      const nominalLocalDrivingTemperatureC =
+        this.nominalPrimaryInletTemperatureC -
+        this.nominalSecondaryInletTemperatureC;
 
+      if (
+        !isFiniteNumber(
+          nominalLocalDrivingTemperatureC
+        ) ||
+        nominalLocalDrivingTemperatureC <= 0
+      ) {
+        return 0;
+      }
+
+      const baseCorrectionFactor = clamp(
+        (
+          this.actualPrimaryInletTemperatureC -
+          this.lowerZoneTemperatureC
+        ) /
+        nominalLocalDrivingTemperatureC,
+
+        0,
+
+        ACS_CONSTANTS
+          .EXCHANGER_MAX_CORRECTION_FACTOR
+      );
+
+      const saturationPenalty =
+        ACS_CONSTANTS
+          .IMMERSED_SATURATION_MAX_PENALTY *
+        Math.pow(
+          this.lowerZoneLoadFraction,
+          ACS_CONSTANTS
+            .IMMERSED_SATURATION_EXPONENT
+        );
+
+      return clamp(
+        baseCorrectionFactor *
+          (1 - saturationPenalty),
+
+        0,
+
+        ACS_CONSTANTS
+          .EXCHANGER_MAX_CORRECTION_FACTOR
+      );
+    }
+
+    /*
+     * Placas: se resuelve f = LMTDreal(f) / LMTDnominal.
+     * El retorno primario y la salida secundaria son dinámicos.
+     * La elevación térmica secundaria disminuye junto con la
+     * potencia transmitida, evitando imponer Tacum a la salida
+     * durante todo el proceso de carga.
+     */
+    const plateCacheKey =
+      this.loadPercent;
+
+    if (
+      this._plateThermalCorrectionCache &&
+      Math.abs(
+        this._plateThermalCorrectionCache.loadPercent -
+        plateCacheKey
+      ) <=
       ACS_CONSTANTS
-        .IMMERSED_EXCHANGER_MAX_CORRECTION_FACTOR
-    );
+        .DEFAULT_CONVERGENCE_TOLERANCE
+    ) {
+      return this
+        ._plateThermalCorrectionCache
+        .factor;
+    }
+
+    const calculatePlateFactorFor =
+      factor => {
+        const dynamicPrimaryOutletTemperatureC =
+          this.actualPrimaryInletTemperatureC -
+          factor *
+          primaryTemperatureDropC;
+
+        const dynamicSecondaryOutletTemperatureC =
+          this.lowerZoneTemperatureC +
+          factor *
+          (
+            this.nominalSecondaryOutletTemperatureC -
+            this.nominalSecondaryInletTemperatureC
+          );
+
+        const actualLMTDC =
+          calculateLogMeanTemperatureDifference(
+            this.actualPrimaryInletTemperatureC -
+              dynamicSecondaryOutletTemperatureC,
+
+            dynamicPrimaryOutletTemperatureC -
+              this.lowerZoneTemperatureC
+          );
+
+        return clamp(
+          actualLMTDC /
+            nominalDifference,
+          0,
+          ACS_CONSTANTS
+            .EXCHANGER_MAX_CORRECTION_FACTOR
+        );
+      };
+
+    if (
+      calculatePlateFactorFor(1) >=
+      1 -
+      ACS_CONSTANTS
+        .DEFAULT_CONVERGENCE_TOLERANCE
+    ) {
+      this._plateThermalCorrectionCache = {
+        loadPercent:
+          plateCacheKey,
+        factor: 1
+      };
+
+      return 1;
+    }
+
+    let lowerFactor = 0;
+    let upperFactor = 1;
+
+    for (
+      let iteration = 0;
+      iteration < 10;
+      iteration += 1
+    ) {
+      const middleFactor =
+        (lowerFactor + upperFactor) / 2;
+
+      const calculatedFactor =
+        calculatePlateFactorFor(
+          middleFactor
+        );
+
+      if (
+        middleFactor <
+        calculatedFactor
+      ) {
+        lowerFactor = middleFactor;
+      } else {
+        upperFactor = middleFactor;
+      }
+    }
+
+    const factor = (
+      lowerFactor +
+      upperFactor
+    ) / 2;
+
+    this._plateThermalCorrectionCache = {
+      loadPercent:
+        plateCacheKey,
+      factor
+    };
+
+    return factor;
   }
 
   /**
    * Potencia efectiva disponible en el intercambiador.
    *
-   * Es dinámica porque en el serpentín cambia con la carga.
+   * Es dinámica porque cambia con la temperatura de la zona inferior.
    */
   get effectiveExchangerPowerKW() {
     return (
@@ -1045,15 +1402,6 @@ class ACSTank {
     inletTemperatureC,
     outletTemperatureC
   ) {
-    if (
-      this.exchangerType !==
-      ACS_EXCHANGER_TYPES.IMMERSED
-    ) {
-      throw new ACSSimulationError(
-        `${this.id}: las temperaturas reales del primario solo se aplican a un serpentín sumergido.`
-      );
-    }
-
     requireFiniteNumber(
       inletTemperatureC,
       `${this.id}.actualPrimaryInletTemperatureC`
@@ -1077,11 +1425,23 @@ class ACSTank {
       );
     }
 
+    if (
+      inletTemperatureC <=
+      this.storageTemperatureC
+    ) {
+      throw new ACSSimulationError(
+        `${this.id}: la ida real del primario debe ser mayor que la temperatura de acumulación.`
+      );
+    }
+
     this.actualPrimaryInletTemperatureC =
       inletTemperatureC;
 
     this.actualPrimaryOutletTemperatureC =
       outletTemperatureC;
+
+    this._plateThermalCorrectionCache =
+      null;
   }
 
   /**
@@ -2347,30 +2707,49 @@ function normalizeSimulationConfig(
     );
 
   /*
-   * Las pérdidas se definen como porcentaje de la demanda energética
-   * diaria. El perfil de 48 h repite el día, por lo que se toma únicamente
-   * el primer periodo de 24 h como referencia.
+   * El caudal total de recirculación es constante durante todo el
+   * día y se dimensiona con la demanda horaria media diaria y un
+   * salto fijo de retorno de 1,5 °C.
+   *
+   * 1. Se obtiene la energía demandada en cada hora.
+   * 2. Se obtiene la energía media por hora.
+   * 3. Las pérdidas de diseño son el porcentaje configurado de esa
+   *    demanda horaria media.
+   * 4. Esa energía horaria se reparte entre 60 minutos.
    */
-  const dailyDemandEnergyKWh =
+  const dailyHourlyDemandEnergyKWh =
     hourlyDemandL
       .slice(0, ACS_CONSTANTS.HOURS_PER_DAY)
-      .reduce(
-        (total, volumeL) =>
-          total +
+      .map(
+        volumeL =>
           waterEnergyRelativeToNetwork(
             volumeL,
             useTemperatureC,
             networkTemperatureC
-          ),
-        0
+          )
       );
 
-  const dailyRecirculationLossTargetKWh =
-    dailyDemandEnergyKWh * lossPercent / 100;
+  const dailyDemandEnergyKWh =
+    sumNumbers(
+      dailyHourlyDemandEnergyKWh
+    );
+
+  const averageHourlyDemandEnergyKWh =
+    dailyDemandEnergyKWh /
+    ACS_CONSTANTS.HOURS_PER_DAY;
+
+  const designRecirculationLossKWhPerHour =
+    averageHourlyDemandEnergyKWh *
+    lossPercent /
+    100;
 
   const recirculationLossTargetKWhPerMinute =
-    dailyRecirculationLossTargetKWh /
-    (ACS_CONSTANTS.HOURS_PER_DAY * ACS_CONSTANTS.MINUTES_PER_HOUR);
+    designRecirculationLossKWhPerHour /
+    ACS_CONSTANTS.MINUTES_PER_HOUR;
+
+  const dailyRecirculationLossTargetKWh =
+    designRecirculationLossKWhPerHour *
+    ACS_CONSTANTS.HOURS_PER_DAY;
 
   const recirculationFlowLPerMinute =
     recirculationLossTargetKWhPerMinute > 0
@@ -2516,6 +2895,11 @@ function normalizeSimulationConfig(
     lossPercent,
 
     dailyDemandEnergyKWh,
+
+    averageHourlyDemandEnergyKWh,
+
+    designRecirculationLossKWhPerHour,
+
     dailyRecirculationLossTargetKWh,
     recirculationLossTargetKWhPerMinute,
 
@@ -2941,14 +3325,10 @@ function flowToVolume(
 /**
  * Calcula la temperatura de retorno de la recirculación.
  *
- * Fórmula de la memoria:
+ * El salto real disminuye linealmente cuando no se alcanza Tuso:
  *
- * Tret =
- * Tuso_real
- * -
- * 1.5 · ((Tuso_real - Tred) / (Tuso - Tred))
- *
- * El salto térmico máximo es de 1.5 °C.
+ * ΔTreal = 1,5 · (Tuso_real - Tred) / (Tuso - Tred)
+ * Tret = Tuso_real - ΔTreal
  *
  * @param {object} params
  * @param {number} params.actualUseTemperatureC
@@ -3005,12 +3385,14 @@ function calculateReturnTemperatureC(params) {
 
   const returnTemperatureC =
     actualUseTemperatureC -
-    1.5 * boundedFactor;
+    ACS_CONSTANTS
+      .RECIRCULATION_DESIGN_DELTA_T_C *
+    boundedFactor;
 
   return Math.max(
     networkTemperatureC,
     Math.min(
-      actualUseTemperatureC,
+      useTemperatureC,
       returnTemperatureC
     )
   );
@@ -3507,6 +3889,18 @@ function calculateMinuteHydraulics(
     });
 
   /*
+   * Temperatura de retorno usada exclusivamente para dimensionar
+   * el caudal constante que atraviesa los depósitos.
+   */
+  const designReturnTemperatureC =
+    Math.max(
+      networkTemperatureC,
+      useTemperatureC -
+        ACS_CONSTANTS
+          .RECIRCULATION_DESIGN_DELTA_T_C
+    );
+
+  /*
    * Pérdida energética total del anillo.
    *
    * Se calcula sobre todo el caudal recirculado y sobre
@@ -3543,9 +3937,10 @@ function calculateMinuteHydraulics(
         storageTemperatureC,
 
       supplyTemperatureC:
-        mixing.actualUseTemperatureC,
+        useTemperatureC,
 
-      returnTemperatureC
+      returnTemperatureC:
+        designReturnTemperatureC
     });
 
   const tankRecirculationVolumeL =
@@ -3614,6 +4009,11 @@ function calculateMinuteHydraulics(
 
     actualUseTemperatureC:
       mixing.actualUseTemperatureC,
+
+    recirculationSupplyTemperatureC:
+      mixing.actualUseTemperatureC,
+
+    designReturnTemperatureC,
 
     returnTemperatureC,
 
@@ -3853,6 +4253,12 @@ recirculationSplitTargetReached:
 
       actualUseTemperatureC:
         this.actualUseTemperatureC,
+
+      recirculationSupplyTemperatureC:
+        this.recirculationSupplyTemperatureC,
+
+      designReturnTemperatureC:
+        this.designReturnTemperatureC,
 
       returnTemperatureC:
         this.returnTemperatureC,
@@ -5252,9 +5658,10 @@ if (typeof window !== "undefined") {
  * Requiere que los bloques 1, 2 y 3 estén definidos antes.
  *
  * Integración de intercambiadores:
- * - Placas: potencia efectiva = potencia nominal.
- * - Serpentín: la potencia efectiva se obtiene dinámicamente
- *   desde ACSTank.effectiveExchangerPowerKW.
+ * - Placas y serpentines: la potencia efectiva se obtiene
+ *   dinámicamente desde ACSTank.effectiveExchangerPowerKW.
+ * - En placas, la temperatura secundaria real es la de la toma
+ *   inferior del depósito.
  */
 
 /**
@@ -6958,6 +7365,7 @@ function integrateContinuousMinute(
         absorbedEnergyKWh: 0,
         effectiveMinutes: 0,
         assignedPowerTimeKWMin: 0,
+        maximumAvailableExchangerPowerKW: 0,
         maximumAbsorbablePowerKW: 0,
         initialExchangerDiagnostic: null,
         finalExchangerDiagnostic: null,
@@ -7280,6 +7688,13 @@ function integrateContinuousMinute(
           (tankGeneration?.assignedPowerKW || 0) *
           subintervalMinutes;
 
+        total.maximumAvailableExchangerPowerKW =
+          Math.max(
+            total.maximumAvailableExchangerPowerKW,
+            tankGeneration
+              ?.availableExchangerPowerKW || 0
+          );
+
         total.maximumAbsorbablePowerKW =
           Math.max(
             total.maximumAbsorbablePowerKW,
@@ -7518,6 +7933,10 @@ function integrateContinuousMinute(
             total
               .initialExchangerDiagnostic
               ?.effectiveExchangerPowerKW ?? 0,
+
+          maximumAvailableExchangerPowerKW:
+            total
+              .maximumAvailableExchangerPowerKW,
 
           maximumAbsorbablePowerKW:
             total.maximumAbsorbablePowerKW,
@@ -11079,11 +11498,7 @@ function validateTankPhysicalState(
 /**
  * Valida la coherencia del intercambiador de un depósito.
  *
- * Placas:
- * - factor térmico = 1;
- * - potencia efectiva = potencia nominal.
- *
- * Serpentín:
+ * Placas y serpentines caracterizados:
  * - temperaturas nominales y reales válidas;
  * - ΔT nominal positivo;
  * - factor entre 0 y 1;
@@ -11306,57 +11721,17 @@ function validateTankExchangerState(
     );
   }
 
-  if (
-    exchangerType ===
-    ACS_EXCHANGER_TYPES.PLATE
-  ) {
-    if (
-      !approximatelyEqual(
-        tankState.thermalCorrectionFactor,
-        1,
-        factorTolerance
-      )
-    ) {
-      issues.push(
-        createValidationIssue(
-          "plate-correction-factor-not-one",
-          {
-            value:
-              tankState
-                .thermalCorrectionFactor
-          }
-        )
-      );
-    }
-
-    if (
-      !approximatelyEqual(
-        tankState.effectiveExchangerPowerKW,
-        tankState.exchangerPowerKW,
-        powerToleranceKW
-      )
-    ) {
-      issues.push(
-        createValidationIssue(
-          "plate-effective-power-mismatch",
-          {
-            nominalPowerKW:
-              tankState.exchangerPowerKW,
-
-            effectivePowerKW:
-              tankState
-                .effectiveExchangerPowerKW
-          }
-        )
-      );
-    }
-  }
+  const hasThermalCharacterization =
+    isFiniteNumber(
+      tankState.nominalTemperatureDifferenceC
+    );
 
   if (
     exchangerType ===
-    ACS_EXCHANGER_TYPES.IMMERSED
+      ACS_EXCHANGER_TYPES.IMMERSED ||
+    hasThermalCharacterization
   ) {
-    const immersedFields = [
+    const thermalFields = [
       "nominalPrimaryInletTemperatureC",
       "nominalPrimaryOutletTemperatureC",
       "nominalPrimaryMeanTemperatureC",
@@ -11370,7 +11745,7 @@ function validateTankExchangerState(
       "actualTemperatureDifferenceC"
     ];
 
-    immersedFields.forEach(
+    thermalFields.forEach(
       field => {
         if (
           !isFiniteNumber(
@@ -11379,7 +11754,7 @@ function validateTankExchangerState(
         ) {
           issues.push(
             createValidationIssue(
-              "invalid-immersed-exchanger-number",
+              "invalid-exchanger-thermal-number",
               {
                 field,
                 value:
@@ -11395,7 +11770,7 @@ function validateTankExchangerState(
       issues.every(
         issue =>
           issue.type !==
-          "invalid-immersed-exchanger-number"
+          "invalid-exchanger-thermal-number"
       )
     ) {
       if (
@@ -12819,11 +13194,35 @@ function validateGeneratorResults(
         .tankResults
         .forEach(
           tank => {
-            const availablePowerKW =
-              isFiniteNumber(
-                tank.availableExchangerPowerKW
-              )
-                ? tank.availableExchangerPowerKW
+            /*
+             * En la integración continua, assignedPowerKW es la media
+             * ponderada de los subintervalos del minuto. La potencia
+             * disponible puede aumentar o disminuir dentro del mismo
+             * minuto al variar la carga. Compararla solamente con el
+             * valor inicial producía falsos positivos.
+             *
+             * Se valida contra la envolvente de potencia realmente
+             * calculada para el intervalo: diagnósticos inicial y final.
+             */
+            const availablePowerCandidates = [
+              tank.maximumAvailableExchangerPowerKW,
+
+              tank.availableExchangerPowerKW,
+
+              tank.initialExchangerDiagnostic
+                ?.effectiveExchangerPowerKW,
+
+              tank.finalExchangerDiagnostic
+                ?.effectiveExchangerPowerKW
+            ].filter(
+              isFiniteNumber
+            );
+
+            const maximumAvailablePowerKW =
+              availablePowerCandidates.length > 0
+                ? Math.max(
+                    ...availablePowerCandidates
+                  )
                 : tank.nominalExchangerPowerKW;
 
             if (
@@ -12831,10 +13230,10 @@ function validateGeneratorResults(
                 tank.assignedPowerKW
               ) &&
               isFiniteNumber(
-                availablePowerKW
+                maximumAvailablePowerKW
               ) &&
               tank.assignedPowerKW >
-                availablePowerKW +
+                maximumAvailablePowerKW +
                 ACS_VALIDATION_DEFAULTS
                   .POWER_TOLERANCE_KW
             ) {
@@ -12851,8 +13250,8 @@ function validateGeneratorResults(
                 assignedPowerKW:
                   tank.assignedPowerKW,
 
-                availableExchangerPowerKW:
-                  availablePowerKW
+                maximumAvailableExchangerPowerKW:
+                  maximumAvailablePowerKW
               });
             }
 
@@ -14141,7 +14540,7 @@ function runACSSimulation(
  */
 const ACSSimulationEngine =
   Object.freeze({
-    version: "1.1.1",
+    version: "1.2.0",
 
     constants:
       ACS_CONSTANTS,

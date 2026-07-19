@@ -487,7 +487,6 @@
                 type="text"
                 autocomplete="organization-title"
                 maxlength="150"
-                required
               >
 
               <small class="form-field__help">
@@ -524,7 +523,6 @@
                 type="text"
                 autocomplete="name"
                 maxlength="150"
-                required
               >
             </div>
 
@@ -537,7 +535,6 @@
                 id="projectDate"
                 name="projectDate"
                 type="date"
-                required
               >
             </div>
 
@@ -552,7 +549,6 @@
                 type="text"
                 autocomplete="street-address"
                 maxlength="200"
-                required
               >
             </div>
 
@@ -568,7 +564,6 @@
                 inputmode="numeric"
                 autocomplete="postal-code"
                 maxlength="10"
-                required
               >
             </div>
 
@@ -583,7 +578,6 @@
                 type="text"
                 autocomplete="address-level2"
                 maxlength="100"
-                required
               >
             </div>
 
@@ -1102,7 +1096,7 @@
                     </div>
 
                     <small class="form-field__help">
-                      Para serpentín, potencia nominal declarada por el fabricante.
+                      Potencia nominal declarada por el fabricante para las condiciones térmicas indicadas.
                     </small>
                   </div>
 
@@ -1111,13 +1105,12 @@
                 <div
                   id="d1ImmersedConfig"
                   class="exchanger-config"
-                  hidden
                 >
                   <section class="exchanger-config__section">
                     <div>
                       <h5>Condiciones nominales del fabricante</h5>
                       <p>
-                        Condiciones térmicas asociadas a la potencia nominal.
+                        Condiciones térmicas asociadas a la potencia nominal, tanto para placas como para serpentín.
                       </p>
                     </div>
 
@@ -1196,7 +1189,7 @@
                     <div>
                       <h5>Condiciones reales de funcionamiento</h5>
                       <p>
-                        Temperaturas reales previstas en el circuito primario.
+                        La temperatura secundaria real se obtiene automáticamente de la zona inferior del depósito.
                       </p>
                     </div>
 
@@ -1312,7 +1305,7 @@
                     </div>
 
                     <small class="form-field__help">
-                      Para serpentín, potencia nominal declarada por el fabricante.
+                      Potencia nominal declarada por el fabricante para las condiciones térmicas indicadas.
                     </small>
                   </div>
 
@@ -1321,13 +1314,12 @@
                 <div
                   id="d2ImmersedConfig"
                   class="exchanger-config"
-                  hidden
                 >
                   <section class="exchanger-config__section">
                     <div>
                       <h5>Condiciones nominales del fabricante</h5>
                       <p>
-                        Condiciones térmicas asociadas a la potencia nominal.
+                        Condiciones térmicas asociadas a la potencia nominal, tanto para placas como para serpentín.
                       </p>
                     </div>
 
@@ -1406,7 +1398,7 @@
                     <div>
                       <h5>Condiciones reales de funcionamiento</h5>
                       <p>
-                        Temperaturas reales previstas en el circuito primario.
+                        La temperatura secundaria real se obtiene automáticamente de la zona inferior del depósito.
                       </p>
                     </div>
 
@@ -1680,8 +1672,8 @@
                   <th>Elemento</th>
                   <th>Volumen</th>
                   <th>Potencia nominal</th>
-                  <th>Potencia efectiva media</th>
-                  <th>Energía máxima</th>
+                  <th>Potencia disponible media</th>
+                  <th>Capacidad útil acumulada</th>
                   <th>Tiempo calentamiento</th>
                   <th>Carga mínima</th>
                   <th>Funcionamiento</th>
@@ -1701,12 +1693,11 @@
           <div class="technical-note">
             <strong>Nota de proyecto:</strong>
 
-            El tiempo de calentamiento está determinado
-            por el par volumen–potencia de cada depósito.
-            El cálculo no considera consumos simultáneos
-            ni pérdidas térmicas. Su validez depende de las
-            condiciones particulares de cada proyecto y debe
-            ser comprobada por el proyectista.
+            El tiempo de calentamiento se simula desde la
+            temperatura de red hasta la de acumulación,
+            actualizando la potencia disponible del
+            intercambiador durante la carga. No considera
+            consumos simultáneos ni pérdidas térmicas.
           </div>
         </section>
 
@@ -2191,16 +2182,12 @@
           !tankCountField ||
           tankCountField.value === "2";
 
-        const isImmersed =
-          tankIsEnabled &&
-          control.typeField.value === "immersed";
-
         control.container.hidden =
-          !isImmersed;
+          !tankIsEnabled;
 
         setContainerRequired(
           control.container,
-          isImmersed
+          tankIsEnabled
         );
       }
 
