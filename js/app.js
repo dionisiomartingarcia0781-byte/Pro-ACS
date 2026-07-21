@@ -1834,11 +1834,10 @@ function validateSimulationConfigBeforeEngine(
   }
 
   if (
-    config.lossPercent < 0 ||
-    config.lossPercent > 40
+    config.lossPercent < 0
   ) {
     throw new Error(
-      "El porcentaje de pérdidas debe estar comprendido entre 0 y 40 %."
+      "El porcentaje de pérdidas no puede ser negativo."
     );
   }
 
