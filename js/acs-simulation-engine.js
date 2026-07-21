@@ -2624,12 +2624,10 @@ function normalizeSimulationConfig(
   const lossPercent =
     inputConfig.lossPercent === undefined
       ? 0
-      : requireNumberInRange(
-          inputConfig.lossPercent,
-          0,
-          100,
-          "lossPercent"
-        );
+      : requireNonNegativeNumber(
+    inputConfig.lossPercent,
+    "lossPercent"
+  );
 
   const sanitaryCheck =
     Boolean(
