@@ -3495,7 +3495,7 @@ function initializeRecirculationScheduleEditor() {
 
       const text = document.createElement("span");
       text.textContent = `${String(hour).padStart(2, "0")} h`;
-      label.append(checkbox, text);
+      label.append(text, checkbox);
       container.appendChild(label);
     });
   };
