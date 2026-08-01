@@ -321,12 +321,17 @@
 
     @media (max-width: 700px) {
       .stepper--six-tabs {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: minmax(0, 1fr);
       }
 
-      .stepper--six-tabs .stepper__item,
+      .stepper--six-tabs .stepper__item {
+        width: 100%;
+        min-width: 0;
+      }
+
       .stepper--six-tabs .stepper__content {
         min-width: 0;
+        text-align: left;
       }
 
       .stepper--six-tabs .stepper__content strong,
@@ -336,14 +341,15 @@
       }
 
       .recirculation-hours {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: minmax(0, 1fr);
       }
-    }
 
-    @media (max-width: 420px) {
       .recirculation-hour {
-        grid-template-columns: 2.5rem 1.25rem;
-        padding-inline: 0.3rem;
+        grid-template-columns: 3rem 1.25rem;
+        justify-content: start;
+        width: 100%;
+        min-width: 0;
+        padding: 0.45rem 0;
       }
     }
 
