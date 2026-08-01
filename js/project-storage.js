@@ -26,7 +26,7 @@
 const ACS_PROJECT_STORAGE_CONFIG =
   Object.freeze({
     FILE_VERSION:
-      "1.3.0",
+      "1.4.0",
 
     FILE_EXTENSION:
       ".acs.json",
@@ -615,7 +615,14 @@ function setFieldValueIfPresent(
     return;
   }
 
-  setFieldValue(id, value);
+  const element =
+    document.getElementById(id);
+
+  if (!element) {
+    return;
+  }
+
+  element.value = value;
 }
 
 /**
@@ -680,6 +687,28 @@ function restoreDemandInputs(
         "customDemandProfile",
         percentages.join(", ")
       );
+
+      getElement(
+        "customDemandProfile"
+      ).dispatchEvent(
+        new Event(
+          "input",
+          {
+            bubbles: true
+          }
+        )
+      );
+
+      getElement(
+        "customDemandProfile"
+      ).dispatchEvent(
+        new Event(
+          "change",
+          {
+            bubbles: true
+          }
+        )
+      );
     }
   }
 
@@ -721,6 +750,75 @@ function restoreTemperatureInputs(
     "lossPercent",
     inputs.lossPercent
   );
+}
+
+
+/**
+ * Restaura las pérdidas térmicas y el horario diario de retorno.
+ */
+function restoreLossInputs(
+  inputs
+) {
+  const networkLosses =
+    isObject(inputs.networkLosses)
+      ? inputs.networkLosses
+      : {};
+
+  const tanks =
+    Array.isArray(inputs.tanks)
+      ? inputs.tanks
+      : [];
+
+  setFieldValueIfPresent(
+    "d1StandingLossW",
+    tanks[0]?.standingLossPowerW
+  );
+
+  setFieldValueIfPresent(
+    "d2StandingLossW",
+    tanks[1]?.standingLossPowerW
+  );
+
+  setFieldValueIfPresent(
+    "acsNetworkLossPowerW",
+    networkLosses.acsPowerW
+  );
+
+  setFieldValueIfPresent(
+    "returnNetworkLossPowerW",
+    networkLosses.returnPowerW
+  );
+
+  if (
+    Array.isArray(
+      networkLosses.recirculationSchedule
+    ) &&
+    networkLosses
+      .recirculationSchedule
+      .length === 24
+  ) {
+    const scheduleField =
+      document.getElementById(
+        "recirculationSchedule"
+      );
+
+    if (scheduleField) {
+      scheduleField.value =
+        networkLosses
+          .recirculationSchedule
+          .map(value => value ? "1" : "0")
+          .join(",");
+
+      scheduleField.dispatchEvent(
+        new Event(
+          "input",
+          {
+            bubbles: true
+          }
+        )
+      );
+    }
+  }
 }
 
 
@@ -932,6 +1030,10 @@ function restoreTechnicalInputs(
   );
 
   restoreTankInputs(
+    inputs
+  );
+
+  restoreLossInputs(
     inputs
   );
 

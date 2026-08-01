@@ -290,6 +290,8 @@ function normalizeReportData(input) {
   const temperatures = safeObject(inputSummary.temperatures);
   const generator = safeObject(inputSummary.generator);
   const recirculation = safeObject(inputSummary.recirculation);
+  const losses = safeObject(inputSummary.losses);
+  const networkLosses = safeObject(losses.network);
 
   const results = safeObject(report.generalResults);
   const energy = safeObject(results.energy);
@@ -355,14 +357,36 @@ function normalizeReportData(input) {
               (displayIndex + 1) % 24
             ).padStart(2, "0");
 
+          const scheduleHourIndex =
+            Number.isInteger(hour.hourIndex)
+              ? ((hour.hourIndex % 24) + 24) % 24
+              : displayIndex;
+
+          const recirculationActive =
+            Array.isArray(
+              networkLosses.recirculationSchedule
+            )
+              ? Boolean(
+                  networkLosses.recirculationSchedule[
+                    scheduleHourIndex
+                  ]
+                )
+              : null;
+
+          const hourlyLossesKWh =
+            firstDefined(
+              hourEnergy.totalLossKWh,
+              hourEnergy.lossesKWh,
+              hourEnergy.recirculationLossKWh
+            );
+
           const deliveredTotalKWh =
             numberOrNull(
               hourEnergy
                 .coveredDemandEnergyKWh
             ) !== null &&
             numberOrNull(
-              hourEnergy
-                .recirculationLossKWh
+              hourlyLossesKWh
             ) !== null
               ? (
                   Number(
@@ -370,8 +394,7 @@ function normalizeReportData(input) {
                       .coveredDemandEnergyKWh
                   ) +
                   Number(
-                    hourEnergy
-                      .recirculationLossKWh
+                    hourlyLossesKWh
                   )
                 )
               : null;
@@ -404,14 +427,18 @@ function normalizeReportData(input) {
 
           return [
             `${startHour}-${endHour}`,
+            recirculationActive === null
+              ? "—"
+              : recirculationActive
+                ? "Activo"
+                : "Parado",
             formatNumber(
               hourEnergy
                 .requestedDemandEnergyKWh,
               2
             ),
             formatNumber(
-              hourEnergy
-                .recirculationLossKWh,
+              hourlyLossesKWh,
               2
             ),
             formatNumber(
@@ -457,6 +484,8 @@ function normalizeReportData(input) {
     temperatures,
     generator,
     recirculation,
+    losses,
+    networkLosses,
     results,
     energy,
     comfort,
@@ -1454,7 +1483,7 @@ function drawIndexPage() {
     ["Resumen ejecutivo", 4],
     ["Demanda de ACS", 5],
     ["Depósitos y temperaturas", 6],
-    ["Balance y acumulación", 7],
+    ["Cobertura y funcionamiento real", 7],
     ["Generador", 8],
     ["Evolución temporal: perfil de demanda y carga", 9],
     ["Evolución temporal: energía y potencia", 10],
@@ -1653,13 +1682,13 @@ function drawExecutivePage(data) {
     x: x + (cardWidth + gap) * 2,
     y: 53,
     width: cardWidth,
-    label: "Calentamiento total",
+    label: "Calentamiento conjunto",
     value: formatDurationMinutes(
       data.heatingTimes
         ?.total
         ?.heatingTimeMinutes
     ),
-    note: "Carga conjunta desde Tred"
+    note: "Con límite real del generador"
   });
 
 
@@ -1902,15 +1931,6 @@ function drawInputsPage(data) {
         )
       },
       {
-        label: "Caudal de retorno",
-        value: formatFlow(
-          firstDefined(
-            data.recirculation.flowLPerMinute,
-            data.hydraulics.totalReturnFlowLPerMinute
-          )
-        )
-      },
-      {
         label: "Comprobación sanitaria",
         value:
           data.inputSummary.sanitaryCheck
@@ -2130,14 +2150,14 @@ function drawMethodologyPage() {
  * ============================================================ */
 
 function drawEnergyPage(data) {
-  addPage("Balance y acumulación");
+  addPage("Cobertura y funcionamiento real");
 
   const x = ACS_REPORT_CONFIG.MARGIN.left;
   const half = (ReportState.contentWidth - 8) / 2;
 
   drawPageTitle(
-    "Balance y acumulación",
-    "Resultados energéticos y funcionamiento de los depósitos durante las últimas 24 horas."
+    "Cobertura y funcionamiento real",
+    "Balance energético, cobertura y operación de la instalación durante las últimas 24 horas."
   );
 
   drawSectionLabel("Energía", x, 52, half);
@@ -2193,18 +2213,6 @@ function drawEnergyPage(data) {
       {
         label: "Arranques",
         value: formatNumber(data.generatorResults.starts, 0)
-      },
-      {
-        label: "Caudal máximo de uso",
-        value: formatFlow(
-          data.hydraulics.maximumUseFlowLPerMinute
-        )
-      },
-      {
-        label: "Caudal total de retorno",
-        value: formatFlow(
-          data.hydraulics.totalReturnFlowLPerMinute
-        )
       }
     ],
     x + half + 8,
@@ -2215,7 +2223,7 @@ function drawEnergyPage(data) {
     }
   );
 
-  drawSectionLabel("Acumulación y calentamiento", x, 137);
+  drawSectionLabel("Producto técnico y comportamiento real", x, 137);
 
   const storageRows = data.tanks.map((tank, index) => [
     tank.tankId || tank.id || `D${index + 1}`,
@@ -2233,11 +2241,11 @@ function drawEnergyPage(data) {
     headers: [
       "Depósito",
       "Volumen",
-      "Pot. disponible",
+      "Pot. disp. interc.",
       "Capacidad útil",
-      "Calentamiento",
-      "Carga mín.",
-      "Funcionamiento"
+      "Tiempo mínimo",
+      "Carga mín. real",
+      "Func. real"
     ],
     rows: storageRows.length > 0
       ? storageRows
@@ -2247,10 +2255,23 @@ function drawEnergyPage(data) {
     fontSize: 6.2
   });
 
-    drawSectionLabel(
-    "Funcionamiento de los intercambiadores",
+  drawParagraph(
+    "La potencia disponible media y el tiempo mínimo caracterizan el producto técnico. La potencia no está limitada por el generador y el tiempo mínimo supone disponibilidad suficiente para aprovechar el intercambiador. La carga mínima y el funcionamiento corresponden al comportamiento real de las últimas 24 horas.",
     x,
-    203
+    187,
+    ReportState.contentWidth,
+    {
+      fontSize: 6.9,
+      lineGap: 3.5,
+      color: ACS_REPORT_CONFIG.COLORS.textSoft,
+      maxLines: 4
+    }
+  );
+
+  drawSectionLabel(
+    "Funcionamiento real de los intercambiadores",
+    x,
+    211
   );
 
   const exchangerRows = data.exchangers.map((item, index) => [
@@ -2261,7 +2282,7 @@ function drawEnergyPage(data) {
 
   drawTable({
     x,
-    y: 217,
+    y: 225,
     headers: [
       "Intercambiador",
       "Funcionamiento",
@@ -2402,6 +2423,7 @@ function drawOperationTablePage(data) {
     y: 61,
     headers: [
       "Hora",
+      "Retorno ACS",
       "Dem.",
       "Pérd.",
       "Entreg.",
@@ -2414,8 +2436,8 @@ function drawOperationTablePage(data) {
     rows:
       data.hourlyOperationRows.length > 0
         ? data.hourlyOperationRows
-        : [["—", "—", "—", "—", "—", "—", "—", "—", "—"]],
-    widths: [18, 20, 18, 20, 20, 14, 22, 22, 24],
+        : [["—", "—", "—", "—", "—", "—", "—", "—", "—", "—"]],
+    widths: [16, 22, 18, 16, 18, 18, 12, 20, 20, 18],
     rowHeight: 8.2,
     fontSize: 5.9
   });
@@ -2910,7 +2932,7 @@ function drawStoragePage(data) {
 
   drawPageTitle(
     "Depósitos y temperaturas",
-    "Configuración de acumulación e intercambiadores."
+    "Producto técnico, dimensionamiento y condiciones térmicas de los intercambiadores."
   );
 
   drawSectionLabel("Temperaturas de proyecto", x, 52);
@@ -2944,7 +2966,7 @@ function drawStoragePage(data) {
     });
   });
 
-  drawSectionLabel("Configuración de acumuladores", x, 113);
+  drawSectionLabel("Producto técnico y dimensionamiento", x, 113);
 
   const tankRows = data.tanks.map((tank, index) => [
     tank.tankId || tank.id || `D${index + 1}`,
@@ -2986,7 +3008,11 @@ function drawStoragePage(data) {
           ?.total
           ?.heatingTimeMinutes
       ),
-      "—"
+      formatPercent(
+        data.results
+          ?.storage
+          ?.systemMinimumLoadPercent
+      )
     ]);
   }
 
@@ -2996,10 +3022,10 @@ function drawStoragePage(data) {
     headers: [
       "Depósito",
       "Volumen",
-      "Potencia",
+      "Potencia nominal",
       "Capacidad útil",
-      "Calentamiento",
-      "Carga mínima"
+      "Tiempo mín.",
+      "Carga mín. real"
     ],
     rows: tankRows.length > 0
       ? tankRows
@@ -3009,7 +3035,20 @@ function drawStoragePage(data) {
     fontSize: 7
   });
 
-  drawSectionLabel("Caracterización de intercambiadores", x, 181);
+  drawParagraph(
+    "El tiempo mínimo se calcula para cada depósito de forma individual, sin consumos, recirculación ni pérdidas y suponiendo que el generador puede aportar toda la potencia requerida por el intercambiador. En la fila Total se muestra el tiempo de calentamiento conjunto con el límite real del generador.",
+    x,
+    174,
+    ReportState.contentWidth,
+    {
+      fontSize: 6.9,
+      lineGap: 3.5,
+      color: ACS_REPORT_CONFIG.COLORS.textSoft,
+      maxLines: 4
+    }
+  );
+
+  drawSectionLabel("Caracterización de intercambiadores", x, 194);
 
   const exchangerRows = data.tanks.map((tank, index) => [
     tank.tankId || tank.id || `D${index + 1}`,
@@ -3021,7 +3060,7 @@ function drawStoragePage(data) {
 
   drawTable({
     x,
-    y: 196,
+    y: 208,
     headers: [
       "Depósito",
       "Tipo",
@@ -3092,14 +3131,6 @@ function drawGeneratorPage(data) {
       {
         label: "Pérdidas configuradas",
         value: formatPercent(firstDefined(data.recirculation.lossPercent, data.inputSummary.lossPercent, data.energy.lossesPercentOfDemand))
-      },
-      {
-        label: "Caudal total de retorno",
-        value: formatFlow(firstDefined(data.recirculation.flowLPerMinute, data.hydraulics.totalReturnFlowLPerMinute))
-      },
-      {
-        label: "Retorno por depósitos",
-        value: formatFlow(data.hydraulics.averageTankReturnFlowLPerMinute)
       },
       {
         label: "Pérdidas del periodo",

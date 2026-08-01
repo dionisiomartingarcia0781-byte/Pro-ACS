@@ -266,6 +266,24 @@
       grid-template-columns: repeat(5, minmax(0, 1fr));
     }
 
+    .stepper--six-tabs {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+
+    .recirculation-hours {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(0, 1fr));
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+
+    .recirculation-hour {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      white-space: nowrap;
+    }
+
     .technical-tab-panel[hidden] {
       display: none !important;
     }
@@ -280,6 +298,44 @@
       .stepper--five-tabs {
         grid-template-columns: 1fr;
       }
+    }
+
+    .results-group {
+      display: grid;
+      gap: 0.9rem;
+      grid-column: 1 / -1;
+    }
+
+    .results-group + .results-group {
+      margin-top: 0.75rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--border-color, #d7dde5);
+    }
+
+    .results-group__header h4 {
+      margin: 0;
+      font-size: 1.05rem;
+    }
+
+    .results-group__header p {
+      margin: 0.25rem 0 0;
+      color: var(--text-muted, #657080);
+      font-size: 0.9rem;
+    }
+
+    .results-group__grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 1rem;
+    }
+
+    .result-table__group-heading th {
+      text-align: center;
+      background: var(--surface-soft, #f7f9fc);
+      color: var(--text-muted, #657080);
+      font-size: 0.82rem;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
     }
 
   </style>
@@ -347,7 +403,7 @@
          ===================================================== -->
 
     <nav
-      class="stepper stepper--five-tabs"
+      class="stepper stepper--six-tabs"
       aria-label="Progreso del proyecto"
     >
       <button
@@ -394,12 +450,26 @@
       </button>
 
       <button
+        id="stepLossesButton"
+        type="button"
+        class="stepper__item"
+        data-screen="losses"
+      >
+        <span class="stepper__number">4</span>
+
+        <span class="stepper__content">
+          <strong>Pérdidas</strong>
+          <small>Depósitos y redes</small>
+        </span>
+      </button>
+
+      <button
         id="stepGeneratorButton"
         type="button"
         class="stepper__item"
         data-screen="generator"
       >
-        <span class="stepper__number">4</span>
+        <span class="stepper__number">5</span>
 
         <span class="stepper__content">
           <strong>Generador</strong>
@@ -414,7 +484,7 @@
         data-screen="results"
         disabled
       >
-        <span class="stepper__number">5</span>
+        <span class="stepper__number">6</span>
 
         <span class="stepper__content">
           <strong>Resultados</strong>
@@ -455,7 +525,7 @@
         <div class="screen__header">
           <div>
             <p class="screen__eyebrow">
-              Pestaña 1 de 5
+              Pestaña 1 de 6
             </p>
 
             <h2 class="screen__title">
@@ -611,7 +681,7 @@
         <div class="screen__header">
           <div>
             <p class="screen__eyebrow">
-              <span id="technicalTabEyebrow">Pestaña 2 de 5</span>
+              <span id="technicalTabEyebrow">Pestaña 2 de 6</span>
             </p>
 
             <h2 id="technicalTabTitle" class="screen__title">
@@ -890,7 +960,7 @@
 
                 <p>
                   Condiciones térmicas de cálculo
-                  y porcentaje de pérdidas de la instalación.
+                  de la instalación.
                 </p>
               </div>
             </div>
@@ -952,31 +1022,6 @@
 
                   <span>°C</span>
                 </div>
-              </div>
-
-              <div class="form-field">
-                <label for="lossPercent">
-                  Pérdidas de recirculación
-                </label>
-
-                <div class="input-with-unit">
-                  <input
-                    id="lossPercent"
-                    name="lossPercent"
-                    type="number"
-                    min="0"
-                    step="0.5"
-                    value="15"
-                    required
-                  >
-
-                  <span>% demanda</span>
-                </div>
-
-                <small class="form-field__help">
-                  Porcentaje de pérdidas energéticas de la instalación respecto a la demanda diaria de ACS.
-                  El caudal de recirculación será calculado automáticamente por el motor.
-                </small>
               </div>
 
             </div>
@@ -1444,6 +1489,59 @@
           </section>
 
 
+          <!-- PÉRDIDAS -->
+
+          <section class="form-card technical-tab-panel" data-technical-tab="losses" hidden>
+            <div class="form-card__header">
+              <div>
+                <h3>Pérdidas térmicas</h3>
+                <p>Define las pérdidas propias de los depósitos y de las redes de distribución.</p>
+              </div>
+            </div>
+
+            <div class="form-grid form-grid--two-columns">
+              <div id="d1StandingLossField" class="form-field">
+                <label for="d1StandingLossW">Pérdidas del depósito D1</label>
+                <div class="input-with-unit">
+                  <input id="d1StandingLossW" name="d1StandingLossW" type="number" min="0" step="1" value="0" required>
+                  <span>W</span>
+                </div>
+              </div>
+
+              <div id="d2StandingLossField" class="form-field">
+                <label for="d2StandingLossW">Pérdidas del depósito D2</label>
+                <div class="input-with-unit">
+                  <input id="d2StandingLossW" name="d2StandingLossW" type="number" min="0" step="1" value="0">
+                  <span>W</span>
+                </div>
+              </div>
+
+              <div class="form-field">
+                <label for="acsNetworkLossPowerW">Pérdidas de la red de ACS</label>
+                <div class="input-with-unit">
+                  <input id="acsNetworkLossPowerW" name="acsNetworkLossPowerW" type="number" min="0" step="1" value="0" required>
+                  <span>W</span>
+                </div>
+              </div>
+
+              <div class="form-field">
+                <label for="returnNetworkLossPowerW">Pérdidas de la red de retorno</label>
+                <div class="input-with-unit">
+                  <input id="returnNetworkLossPowerW" name="returnNetworkLossPowerW" type="number" min="0" step="1" value="0" required>
+                  <span>W</span>
+                </div>
+              </div>
+
+              <div class="form-field form-field--full">
+                <label>Horario de funcionamiento de la recirculación</label>
+                <input id="recirculationSchedule" name="recirculationSchedule" type="hidden" value="1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1">
+                <div id="recirculationHours" class="recirculation-hours" aria-label="Horas de recirculación"></div>
+                <small class="form-field__help">Marca las horas durante las que funciona la recirculación. Fuera de ellas, las pérdidas de ACS se ponderan por la demanda horaria y por el factor interno del 30 %.</small>
+              </div>
+            </div>
+          </section>
+
+
           <!-- GENERADOR Y CONTROL -->
 
           <section class="form-card technical-tab-panel" data-technical-tab="generator" hidden>
@@ -1568,7 +1666,7 @@
         <div class="screen__header">
           <div>
             <p class="screen__eyebrow">
-              Pestaña 5 de 5
+              Pestaña 6 de 6
             </p>
 
             <h2 class="screen__title">
@@ -1632,11 +1730,11 @@
         <section class="result-section">
           <div class="result-section__header">
             <div>
-              <h3>Resultados generales</h3>
+              <h3>Análisis de resultados</h3>
 
               <p>
-                Balance energético, funcionamiento
-                e indicadores hidráulicos.
+                Lectura separada del producto técnico dimensionado
+                y del comportamiento real de la instalación.
               </p>
             </div>
           </div>
@@ -1655,11 +1753,11 @@
         <section class="result-section">
           <div class="result-section__header">
             <div>
-              <h3>Acumulación y calentamiento</h3>
+              <h3>Producto técnico y dimensionamiento</h3>
 
               <p>
-                Resultados individuales y totales
-                de los depósitos.
+                Características de los depósitos e intercambiadores
+                y tiempos teóricos de calentamiento.
               </p>
             </div>
           </div>
@@ -1667,15 +1765,19 @@
           <div class="table-wrapper">
             <table class="result-table">
               <thead>
+                <tr class="result-table__group-heading">
+                  <th colspan="6">Producto técnico y dimensionamiento</th>
+                  <th colspan="2">Cobertura y funcionamiento real · últimas 24 h</th>
+                </tr>
                 <tr>
                   <th>Elemento</th>
                   <th>Volumen</th>
                   <th>Potencia nominal</th>
-                  <th>Potencia disponible media</th>
+                  <th>Potencia disponible media del intercambiador</th>
                   <th>Capacidad útil acumulada</th>
-                  <th>Tiempo calentamiento</th>
-                  <th>Carga mínima</th>
-                  <th>Funcionamiento</th>
+                  <th>Tiempo mínimo de calentamiento</th>
+                  <th>Carga mínima registrada</th>
+                  <th>Funcionamiento real</th>
                 </tr>
               </thead>
 
@@ -1690,13 +1792,19 @@
           </div>
 
           <div class="technical-note">
-            <strong>Nota de proyecto:</strong>
+            <strong>Interpretación de los resultados:</strong>
 
-            El tiempo de calentamiento se simula desde la
-            temperatura de red hasta la de acumulación,
-            actualizando la potencia disponible del
-            intercambiador durante la carga. No considera
-            consumos simultáneos ni pérdidas térmicas.
+            La <strong>potencia disponible media del intercambiador</strong>
+            representa la capacidad térmica media que puede transmitir según
+            sus condiciones reales de funcionamiento y no está limitada por la
+            potencia del generador. El <strong>tiempo mínimo de calentamiento</strong>
+            corresponde al calentamiento individual desde la temperatura de red
+            hasta la de acumulación, sin consumos, recirculación ni pérdidas y
+            suponiendo que el generador puede aportar toda la potencia requerida
+            por el intercambiador. La fila <strong>Total</strong> muestra el tiempo
+            de calentamiento conjunto, calculado con la potencia y la estrategia
+            real del generador. La carga mínima y las horas de funcionamiento
+            corresponden a las últimas 24 horas simuladas.
           </div>
         </section>
 
@@ -2003,9 +2111,10 @@
   <!-- Control general de la aplicación -->
   <script src="./js/app.js"></script>
 
-  <!-- Navegación visual en cinco pestañas -->
+  <!-- La navegación se gestiona exclusivamente desde app.js -->
   <script>
     (() => {
+      return;
       const projectScreen = document.getElementById("projectScreen");
       const inputsScreen = document.getElementById("inputsScreen");
       const resultsScreen = document.getElementById("resultsScreen");

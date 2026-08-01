@@ -34,6 +34,13 @@ const ACS_CONSTANTS = Object.freeze({
   RECIRCULATION_DESIGN_DELTA_T_C: 1.5,
 
   /**
+   * Fracción de las pérdidas nominales de la red de ACS aplicada cuando
+   * la recirculación está parada pero existe demanda. La intensidad se
+   * pondera además con el perfil horario respecto a su hora punta.
+   */
+  INTERMITTENT_ACS_NETWORK_LOSS_FACTOR: 0.30,
+
+  /**
    * El serpentín se considera situado en el tercio inferior.
    *
    * Hasta que la carga global supera 2/3, el modelo considera
@@ -697,6 +704,12 @@ class ACSTank {
         `${this.id}.networkTemperatureC`
       );
 
+    this.standingLossPowerW =
+      requireNonNegativeNumber(
+        config.standingLossPowerW ?? 0,
+        `${this.id}.standingLossPowerW`
+      );
+
     if (
       this.storageTemperatureC <=
       this.networkTemperatureC
@@ -805,6 +818,9 @@ class ACSTank {
 
       exchangerPowerKW:
         this.exchangerPowerKW,
+
+      standingLossPowerW:
+        this.standingLossPowerW,
 
       nominalPrimaryInletTemperatureC:
         this.nominalPrimaryInletTemperatureC,
@@ -1743,6 +1759,9 @@ class ACSTank {
       effectiveExchangerPowerKW:
         this.effectiveExchangerPowerKW,
 
+      standingLossPowerW:
+        this.standingLossPowerW,
+
       thermalCorrectionFactor:
         this.thermalCorrectionFactor,
 
@@ -2621,14 +2640,6 @@ function normalizeSimulationConfig(
       "startThresholdPercent"
     );
 
-  const lossPercent =
-    inputConfig.lossPercent === undefined
-      ? 0
-      : requireNonNegativeNumber(
-    inputConfig.lossPercent,
-    "lossPercent"
-  );
-
   const sanitaryCheck =
     Boolean(
       inputConfig.sanitaryCheck
@@ -2704,17 +2715,7 @@ function normalizeSimulationConfig(
       useTemperatureC
     );
 
-  /*
-   * El caudal total de recirculación es constante durante todo el
-   * día y se dimensiona con la demanda horaria media diaria y un
-   * salto fijo de retorno de 1,5 °C.
-   *
-   * 1. Se obtiene la energía demandada en cada hora.
-   * 2. Se obtiene la energía media por hora.
-   * 3. Las pérdidas de diseño son el porcentaje configurado de esa
-   *    demanda horaria media.
-   * 4. Esa energía horaria se reparte entre 60 minutos.
-   */
+  /* Energía de demanda conservada para resultados y comprobaciones. */
   const dailyHourlyDemandEnergyKWh =
     hourlyDemandL
       .slice(0, ACS_CONSTANTS.HOURS_PER_DAY)
@@ -2732,30 +2733,102 @@ function normalizeSimulationConfig(
       dailyHourlyDemandEnergyKWh
     );
 
-  const averageHourlyDemandEnergyKWh =
-    dailyDemandEnergyKWh /
-    ACS_CONSTANTS.HOURS_PER_DAY;
+  const networkLossesInput =
+    inputConfig.networkLosses || {};
 
-  const designRecirculationLossKWhPerHour =
-    averageHourlyDemandEnergyKWh *
-    lossPercent /
-    100;
+  const recirculationScheduleInput =
+    networkLossesInput.recirculationSchedule;
 
-  const recirculationLossTargetKWhPerMinute =
-    designRecirculationLossKWhPerHour /
-    ACS_CONSTANTS.MINUTES_PER_HOUR;
+  if (
+    !Array.isArray(recirculationScheduleInput) ||
+    recirculationScheduleInput.length !==
+      ACS_CONSTANTS.HOURS_PER_DAY
+  ) {
+    throw new ACSSimulationError(
+      "networkLosses.recirculationSchedule debe contener 24 estados horarios."
+    );
+  }
 
-  const dailyRecirculationLossTargetKWh =
-    designRecirculationLossKWhPerHour *
-    ACS_CONSTANTS.HOURS_PER_DAY;
+  const networkLosses = {
+    acsPowerW:
+      requireNonNegativeNumber(
+        networkLossesInput.acsPowerW ?? 0,
+        "networkLosses.acsPowerW"
+      ),
 
-  const recirculationFlowLPerMinute =
-    recirculationLossTargetKWhPerMinute > 0
-      ? equivalentVolumeFromEnergy(
-          recirculationLossTargetKWhPerMinute,
-          ACS_CONSTANTS.RECIRCULATION_DESIGN_DELTA_T_C
-        )
-      : 0;
+    returnPowerW:
+      requireNonNegativeNumber(
+        networkLossesInput.returnPowerW ?? 0,
+        "networkLosses.returnPowerW"
+      ),
+
+    recirculationSchedule:
+      recirculationScheduleInput.map(Boolean),
+
+    intermittentUseFactor:
+      ACS_CONSTANTS
+        .INTERMITTENT_ACS_NETWORK_LOSS_FACTOR
+  };
+
+  const dailyMaximumHourlyDemandL =
+    Math.max(
+      0,
+      ...hourlyDemandL.slice(
+        0,
+        ACS_CONSTANTS.HOURS_PER_DAY
+      )
+    );
+
+  const hourlyNetworkLossPowerW =
+    Array.from(
+      { length: ACS_CONSTANTS.SIMULATION_HOURS },
+      (_value, hourIndex) => {
+        const dailyHourIndex =
+          hourIndex % ACS_CONSTANTS.HOURS_PER_DAY;
+
+        const recirculationActive =
+          networkLosses
+            .recirculationSchedule[dailyHourIndex];
+
+        const demandIntensity =
+          dailyMaximumHourlyDemandL > 0
+            ? hourlyDemandL[hourIndex] /
+              dailyMaximumHourlyDemandL
+            : 0;
+
+        return recirculationActive
+          ? networkLosses.acsPowerW +
+              networkLosses.returnPowerW
+          : networkLosses.acsPowerW *
+              networkLosses.intermittentUseFactor *
+              demandIntensity;
+      }
+    );
+
+  const hourlyRecirculationFlowLPerMinute =
+    hourlyNetworkLossPowerW.map(
+      lossPowerW => {
+        const lossKWhPerMinute =
+          lossPowerW /
+          1000 /
+          ACS_CONSTANTS.MINUTES_PER_HOUR;
+
+        return lossKWhPerMinute > 0
+          ? equivalentVolumeFromEnergy(
+              lossKWhPerMinute,
+              ACS_CONSTANTS.RECIRCULATION_DESIGN_DELTA_T_C
+            )
+          : 0;
+      }
+    );
+
+  const dailyNetworkLossTargetKWh =
+    sumNumbers(
+      hourlyNetworkLossPowerW.slice(
+        0,
+        ACS_CONSTANTS.HOURS_PER_DAY
+      )
+    ) / 1000;
 
   const tanks =
     inputConfig.tanks.map(
@@ -2815,6 +2888,12 @@ function normalizeSimulationConfig(
 
           storageTemperatureC,
           networkTemperatureC,
+
+          standingLossPowerW:
+            requireNonNegativeNumber(
+              tankConfig.standingLossPowerW ?? 0,
+              `tanks[${index}].standingLossPowerW`
+            ),
 
           /**
            * Se conserva el comportamiento actual del motor:
@@ -2890,22 +2969,15 @@ function normalizeSimulationConfig(
     hourlyDemandAt60CL,
     hourlyDemandL,
 
-    lossPercent,
-
     dailyDemandEnergyKWh,
 
-    averageHourlyDemandEnergyKWh,
-
-    designRecirculationLossKWhPerHour,
-
-    dailyRecirculationLossTargetKWh,
-    recirculationLossTargetKWhPerMinute,
+    networkLosses,
+    hourlyNetworkLossPowerW,
+    hourlyRecirculationFlowLPerMinute,
+    dailyNetworkLossTargetKWh,
 
     recirculationDesignDeltaTemperatureC:
       ACS_CONSTANTS.RECIRCULATION_DESIGN_DELTA_T_C,
-
-    /* Resultado derivado, no entrada del usuario. */
-    recirculationFlowLPerMinute,
 
     sanitaryCheck,
 
@@ -3807,6 +3879,7 @@ function calculateMinuteHydraulics(
     useTemperatureC,
     networkTemperatureC,
     recirculationFlowLPerMinute,
+    tankLossTransportFlowLPerMinute = 0,
     intervalMinutes = 1
   } = params;
 
@@ -3840,6 +3913,11 @@ function calculateMinuteHydraulics(
     "recirculationFlowLPerMinute"
   );
 
+  requireNonNegativeNumber(
+    tankLossTransportFlowLPerMinute,
+    "tankLossTransportFlowLPerMinute"
+  );
+
   requirePositiveNumber(
     intervalMinutes,
     "intervalMinutes"
@@ -3866,11 +3944,21 @@ function calculateMinuteHydraulics(
   /*
    * Caudal total que circula por el anillo de recirculación.
    */
-  const recirculationVolumeL =
+  const networkLossTransportVolumeL =
     flowToVolume(
       recirculationFlowLPerMinute,
       intervalMinutes
     );
+
+  const tankLossTransportVolumeL =
+    flowToVolume(
+      tankLossTransportFlowLPerMinute,
+      intervalMinutes
+    );
+
+  const recirculationVolumeL =
+    networkLossTransportVolumeL +
+    tankLossTransportVolumeL;
 
   /*
    * Temperatura del retorno después de las pérdidas
@@ -3906,7 +3994,25 @@ function calculateMinuteHydraulics(
    */
   const recirculationLossKWh =
     calculateRecirculationLossKWh({
-      recirculationVolumeL,
+      recirculationVolumeL:
+        networkLossTransportVolumeL,
+
+      supplyTemperatureC:
+        mixing.actualUseTemperatureC,
+
+      returnTemperatureC
+    });
+
+  /*
+   * Cuando existe circulación, las pérdidas propias de los depósitos se
+   * incorporan al caudal equivalente y se reponen hidráulicamente desde D1.
+   * Se mantienen separadas de las pérdidas de red para no alterar su
+   * desglose energético en los resultados.
+   */
+  const transportedTankStandingLossKWh =
+    calculateRecirculationLossKWh({
+      recirculationVolumeL:
+        tankLossTransportVolumeL,
 
       supplyTemperatureC:
         mixing.actualUseTemperatureC,
@@ -3987,6 +4093,10 @@ function calculateMinuteHydraulics(
      */
     recirculationVolumeL,
 
+    networkLossTransportVolumeL,
+
+    tankLossTransportVolumeL,
+
     /*
      * Parte que atraviesa los depósitos.
      */
@@ -4015,7 +4125,9 @@ function calculateMinuteHydraulics(
 
     returnTemperatureC,
 
-    recirculationLossKWh
+    recirculationLossKWh,
+
+    transportedTankStandingLossKWh
   };
 }
 
@@ -4111,6 +4223,12 @@ class ACSMinuteHydraulicState {
         "recirculationFlowLPerMinute"
       );
 
+    this.tankLossTransportFlowLPerMinute =
+      requireNonNegativeNumber(
+        config.tankLossTransportFlowLPerMinute ?? 0,
+        "tankLossTransportFlowLPerMinute"
+      );
+
     this.intervalMinutes =
       config.intervalMinutes === undefined
         ? 1
@@ -4149,6 +4267,9 @@ class ACSMinuteHydraulicState {
 
         recirculationFlowLPerMinute:
           this.recirculationFlowLPerMinute,
+
+        tankLossTransportFlowLPerMinute:
+          this.tankLossTransportFlowLPerMinute,
 
         intervalMinutes:
           this.intervalMinutes
@@ -4234,6 +4355,12 @@ class ACSMinuteHydraulicState {
 
       recirculationVolumeL:
         this.recirculationVolumeL,
+
+      networkLossTransportVolumeL:
+        this.networkLossTransportVolumeL,
+
+      tankLossTransportVolumeL:
+        this.tankLossTransportVolumeL,
         tankRecirculationVolumeL:
   this.tankRecirculationVolumeL,
 
@@ -4263,6 +4390,9 @@ recirculationSplitTargetReached:
 
       recirculationLossKWh:
         this.recirculationLossKWh,
+
+      transportedTankStandingLossKWh:
+        this.transportedTankStandingLossKWh,
 
       demandCoverage:
         cloneObject(
@@ -4336,10 +4466,35 @@ function createMinuteHydraulicState(
       config.networkTemperatureC,
 
     recirculationFlowLPerMinute:
-      config.recirculationFlowLPerMinute,
+      getRecirculationFlowForMinute(
+        config,
+        minuteIndex
+      ),
 
     intervalMinutes: 1
   });
+}
+
+/**
+ * Devuelve el caudal equivalente de pérdidas correspondiente al minuto.
+ */
+function getRecirculationFlowForMinute(
+  config,
+  minuteIndex
+) {
+  const hourIndex =
+    Math.floor(
+      minuteIndex /
+      ACS_CONSTANTS.MINUTES_PER_HOUR
+    );
+
+  return requireNonNegativeNumber(
+    config.hourlyRecirculationFlowLPerMinute[
+      hourIndex %
+        config.hourlyRecirculationFlowLPerMinute.length
+    ],
+    "hourlyRecirculationFlowLPerMinute"
+  );
 }
 
 /**
@@ -7143,6 +7298,35 @@ function resolveHydraulicSubintervalIteratively(
     minuteDemand.equivalentDemandVolumeL *
     intervalMinutes;
 
+  const networkLossFlowLPerMinute =
+    getRecirculationFlowForMinute(
+      config,
+      minuteIndex
+    );
+
+  const hasWaterFlow =
+    equivalentDemandVolumeL > 1e-12 ||
+    networkLossFlowLPerMinute > 1e-12;
+
+  const totalTankStandingLossPowerW =
+    sumNumbers(
+      tanks.map(
+        tank => tank.standingLossPowerW
+      )
+    );
+
+  const tankLossTransportFlowLPerMinute =
+    hasWaterFlow &&
+    totalTankStandingLossPowerW > 0
+      ? equivalentVolumeFromEnergy(
+          totalTankStandingLossPowerW /
+            1000 /
+            ACS_CONSTANTS.MINUTES_PER_HOUR,
+          ACS_CONSTANTS
+            .RECIRCULATION_DESIGN_DELTA_T_C
+        )
+      : 0;
+
   const initialTankStates =
     getTankStates(tanks);
 
@@ -7199,7 +7383,9 @@ function resolveHydraulicSubintervalIteratively(
           config.networkTemperatureC,
 
         recirculationFlowLPerMinute:
-          config.recirculationFlowLPerMinute,
+          networkLossFlowLPerMinute,
+
+        tankLossTransportFlowLPerMinute,
 
         intervalMinutes
       });
@@ -7281,7 +7467,12 @@ function resolveHydraulicSubintervalIteratively(
       ),
 
     provisionalTanks:
-      finalProvisionalTanks
+      finalProvisionalTanks,
+
+    hasWaterFlow,
+
+    tankLossesTransportedByFlow:
+      tankLossTransportFlowLPerMinute > 0
   };
 }
 
@@ -7381,6 +7572,10 @@ function integrateContinuousMinute(
   let uncoveredEquivalentVolumeL = 0;
   let equivalentDemandVolumeL = 0;
   let recirculationLossKWh = 0;
+  let tankStandingLossKWh = 0;
+  let directTankStandingLossKWh = 0;
+  const tankStandingLossesKWh =
+    tanks.map(() => 0);
 
   /*
    * Acumuladores hidráulicos del minuto completo.
@@ -7393,6 +7588,8 @@ function integrateContinuousMinute(
   let hotConsumptionVolumeL = 0;
   let coldMixingVolumeL = 0;
   let recirculationVolumeL = 0;
+  let networkLossTransportVolumeL = 0;
+  let tankLossTransportVolumeL = 0;
   let tankRecirculationVolumeL = 0;
   let bypassRecirculationVolumeL = 0;
   let totalVolumeThroughTanksL = 0;
@@ -7627,6 +7824,24 @@ function integrateContinuousMinute(
       );
     }
 
+    const transportedTankStandingLossKWh =
+      hydraulicResolution
+        .tankLossesTransportedByFlow
+        ? Math.max(
+            0,
+            hydraulicResolution
+              .hydraulicState
+              .transportedTankStandingLossKWh || 0
+          )
+        : 0;
+
+    const totalTankStandingLossPowerW =
+      sumNumbers(
+        tanks.map(
+          tank => tank.standingLossPowerW
+        )
+      );
+
     tanks.forEach(
       (tank, tankIndex) => {
         const hydraulicFinalEnergyKWh =
@@ -7661,6 +7876,37 @@ function integrateContinuousMinute(
               ?.absorbedEnergyKWh || 0
           );
 
+        const requestedStandingLossKWh =
+          tank.standingLossPowerW /
+          1000 *
+          subintervalMinutes /
+          ACS_CONSTANTS.MINUTES_PER_HOUR;
+
+        const transportedStandingLossKWh =
+          totalTankStandingLossPowerW > 0
+            ? transportedTankStandingLossKWh *
+              tank.standingLossPowerW /
+              totalTankStandingLossPowerW
+            : 0;
+
+        const directStandingLossKWh =
+          hydraulicResolution
+            .tankLossesTransportedByFlow
+            ? 0
+            : Math.min(
+                requestedStandingLossKWh,
+                Math.max(
+                  0,
+                  substepInitialEnergies[tankIndex] +
+                    absorbedEnergyKWh -
+                    extractedEnergyKWh
+                )
+              );
+
+        const standingLossKWh =
+          transportedStandingLossKWh +
+          directStandingLossKWh;
+
         /*
          * Aplicación simultánea del incremento integrado:
          *
@@ -7669,7 +7915,8 @@ function integrateContinuousMinute(
         tank.energyKWh =
           substepInitialEnergies[tankIndex] +
           absorbedEnergyKWh -
-          extractedEnergyKWh;
+          extractedEnergyKWh -
+          directStandingLossKWh;
 
         tank.normalizeState();
 
@@ -7713,6 +7960,15 @@ function integrateContinuousMinute(
 
         hydraulicEnergyExtractedKWh +=
           extractedEnergyKWh;
+
+        tankStandingLossesKWh[tankIndex] +=
+          standingLossKWh;
+
+        tankStandingLossKWh +=
+          standingLossKWh;
+
+        directTankStandingLossKWh +=
+          directStandingLossKWh;
       }
     );
 
@@ -7809,6 +8065,16 @@ function integrateContinuousMinute(
       hydraulicResolution
         .hydraulicState
         .recirculationVolumeL || 0;
+
+    networkLossTransportVolumeL +=
+      hydraulicResolution
+        .hydraulicState
+        .networkLossTransportVolumeL || 0;
+
+    tankLossTransportVolumeL +=
+      hydraulicResolution
+        .hydraulicState
+        .tankLossTransportVolumeL || 0;
 
     tankRecirculationVolumeL +=
       hydraulicResolution
@@ -8006,6 +8272,8 @@ function integrateContinuousMinute(
     hotConsumptionVolumeL,
     coldMixingVolumeL,
     recirculationVolumeL,
+    networkLossTransportVolumeL,
+    tankLossTransportVolumeL,
     tankRecirculationVolumeL,
     bypassRecirculationVolumeL,
     totalVolumeThroughTanksL,
@@ -8068,6 +8336,12 @@ function integrateContinuousMinute(
 
     hydraulicEnergyExtractedKWh,
     recirculationLossKWh,
+    tankStandingLossKWh,
+    directTankStandingLossKWh,
+    tankStandingLossesKWh,
+    totalLossKWh:
+      recirculationLossKWh +
+      tankStandingLossKWh,
 
     demandCoverage,
     generation,
@@ -8147,7 +8421,11 @@ function resolveSimulationMinute(
     generation,
     demandCoverage,
     hydraulicEnergyExtractedKWh,
-    recirculationLossKWh
+    recirculationLossKWh,
+    tankStandingLossKWh,
+    directTankStandingLossKWh,
+    tankStandingLossesKWh,
+    totalLossKWh
   } = continuousResolution;
 
   if (generation.stoppedDuringMinute) {
@@ -8205,6 +8483,7 @@ function resolveSimulationMinute(
     initialStoredEnergyKWh +
     generation.absorbedEnergyKWh -
     hydraulicEnergyExtractedKWh -
+    directTankStandingLossKWh -
     finalStoredEnergyKWh;
 
   return {
@@ -8282,6 +8561,15 @@ function resolveSimulationMinute(
           .uncoveredEnergyKWh,
 
       recirculationLossKWh,
+
+      tankStandingLossKWh,
+
+      directTankStandingLossKWh,
+
+      tankStandingLossesKWh:
+        [...tankStandingLossesKWh],
+
+      totalLossKWh,
 
       minuteBalanceResidualKWh
     },
@@ -8767,6 +9055,15 @@ function aggregateTankHourlyResult(
       )
     );
 
+  const standingLossKWh =
+    sumNumbers(
+      minuteResults.map(
+        result =>
+          result.energies
+            .tankStandingLossesKWh[tankIndex] || 0
+      )
+    );
+
   return {
     tankId:
       initialState.id,
@@ -8782,6 +9079,8 @@ function aggregateTankHourlyResult(
       initialState.energyKWh,
 
     generatedEnergyKWh,
+
+    standingLossKWh,
 
     effectiveGenerationMinutes,
 
@@ -9100,6 +9399,18 @@ function aggregateHourlyResult(
       )
     );
 
+  const tankStandingLossKWh =
+    sumNumbers(
+      orderedMinutes.map(
+        result =>
+          result.energies.tankStandingLossKWh
+      )
+    );
+
+  const totalLossKWh =
+    recirculationLossKWh +
+    tankStandingLossKWh;
+
   const equivalentDemandVolumeL =
     sumNumbers(
       orderedMinutes.map(
@@ -9251,7 +9562,7 @@ function aggregateHourlyResult(
     generatedEnergyKWh +
     storageDischargeKWh -
     coveredDemandEnergyKWh -
-    recirculationLossKWh;
+    totalLossKWh;
 
   const convergenceFailures =
     orderedMinutes.filter(
@@ -9309,6 +9620,10 @@ function aggregateHourlyResult(
       uncoveredDemandEnergyKWh,
 
       recirculationLossKWh,
+
+      tankStandingLossKWh,
+
+      totalLossKWh,
 
       hourlyBalanceResidualKWh
     },
@@ -9516,6 +9831,18 @@ function aggregatePeriodResults(
       )
     );
 
+  const tankStandingLossKWh =
+    sumNumbers(
+      hourlyResults.map(
+        hour =>
+          hour.energy.tankStandingLossKWh
+      )
+    );
+
+  const totalLossKWh =
+    recirculationLossKWh +
+    tankStandingLossKWh;
+
   const equivalentDemandVolumeL =
     sumNumbers(
       hourlyResults.map(
@@ -9608,7 +9935,7 @@ function aggregatePeriodResults(
     generatedEnergyKWh +
     storageDischargeKWh -
     coveredDemandEnergyKWh -
-    recirculationLossKWh;
+    totalLossKWh;
 
   const coveragePercent =
     requestedDemandEnergyKWh > 0
@@ -9621,7 +9948,7 @@ function aggregatePeriodResults(
       const lossesPercentOfDemand =
   requestedDemandEnergyKWh > 0
     ? (
-        recirculationLossKWh /
+        totalLossKWh /
         requestedDemandEnergyKWh *
         100
       )
@@ -9679,6 +10006,13 @@ function aggregatePeriodResults(
             tank =>
               tank
                 .generatedEnergyKWh
+          )
+        ),
+
+      standingLossKWh:
+        sumNumbers(
+          tankHours.map(
+            tank => tank.standingLossKWh
           )
         ),
 
@@ -10025,6 +10359,10 @@ function aggregatePeriodResults(
   uncoveredDemandEnergyKWh,
 
   recirculationLossKWh,
+
+  tankStandingLossKWh,
+
+  totalLossKWh,
 
   lossesPercentOfDemand,
 
@@ -10877,21 +11215,35 @@ function createSimulationSummary(
       lossesKWh:
   totals
     .energy
+    .totalLossKWh,
+
+networkLossesKWh:
+  totals
+    .energy
     .recirculationLossKWh,
+
+tankStandingLossesKWh:
+  totals
+    .energy
+    .tankStandingLossKWh,
 
 lossesPercentOfDemand:
   totals
     .energy
     .lossesPercentOfDemand,
 
-configuredLossPercent:
-  simulationResult.config.lossPercent,
+configuredNetworkLosses:
+  cloneObject(
+    simulationResult.config.networkLosses
+  ),
 
-targetLossesKWh:
-  simulationResult.config.dailyRecirculationLossTargetKWh,
+configuredTankStandingLossesW:
+  simulationResult.config.tanks.map(
+    tank => tank.standingLossPowerW
+  ),
 
-calculatedRecirculationFlowLPerMinute:
-  simulationResult.config.recirculationFlowLPerMinute,
+targetNetworkLossesKWh:
+  simulationResult.config.dailyNetworkLossTargetKWh,
 
 balanceResidualKWh:
   totals
@@ -11951,7 +12303,7 @@ function validateMinuteTankStates(
 /**
  * Valida el balance energético interno de un minuto.
  *
- * Einicial + Egenerada - Eextraída - Efinal = 0
+ * Einicial + Egenerada - Eextraída - Epérdidas depósito - Efinal = 0
  */
 function validateMinuteEnergyBalance(
   minuteResult,
@@ -12004,6 +12356,7 @@ function validateMinuteEnergyBalance(
     "initialStoredEnergyKWh",
     "generatedEnergyKWh",
     "hydraulicEnergyExtractedKWh",
+    "directTankStandingLossKWh",
     "finalStoredEnergyKWh"
   ];
 
@@ -12047,6 +12400,7 @@ function validateMinuteEnergyBalance(
     energies.initialStoredEnergyKWh +
     energies.generatedEnergyKWh -
     energies.hydraulicEnergyExtractedKWh -
+    energies.directTankStandingLossKWh -
     energies.finalStoredEnergyKWh;
 
   return {
@@ -12080,7 +12434,7 @@ function validateMinuteEnergyBalance(
  *
  * Egenerada + Einicial - Efinal
  * =
- * Edemanda cubierta + Epérdidas de recirculación
+ * Edemanda cubierta + Epérdidas totales
  */
 function validatePeriodEnergyBalance(
   periodTotals,
@@ -12127,7 +12481,7 @@ function validatePeriodEnergyBalance(
 
   const rightSideKWh =
     energy.coveredDemandEnergyKWh +
-    energy.recirculationLossKWh;
+    energy.totalLossKWh;
 
   const residualKWh =
     leftSideKWh -
@@ -12175,7 +12529,13 @@ function validatePeriodEnergyBalance(
         energy.coveredDemandEnergyKWh,
 
       recirculationLossKWh:
-        energy.recirculationLossKWh
+        energy.recirculationLossKWh,
+
+      tankStandingLossKWh:
+        energy.tankStandingLossKWh,
+
+      totalLossKWh:
+        energy.totalLossKWh
     },
 
     issues: []
@@ -12828,7 +13188,7 @@ function validateMinuteRecirculationLoss(
     calculateRecirculationLossKWh({
       recirculationVolumeL:
         hydraulicState
-          .recirculationVolumeL,
+          .networkLossTransportVolumeL,
 
       supplyTemperatureC:
         hydraulicState
@@ -14176,6 +14536,16 @@ function createUIResult(
                 .energy
                 .recirculationLossKWh,
 
+            tankStandingLossKWh:
+              hour
+                .energy
+                .tankStandingLossKWh,
+
+            totalLossKWh:
+              hour
+                .energy
+                .totalLossKWh,
+
             initialStoredKWh:
               hour
                 .energy
@@ -14538,7 +14908,7 @@ function runACSSimulation(
  */
 const ACSSimulationEngine =
   Object.freeze({
-    version: "1.2.0",
+    version: "1.3.0",
 
     constants:
       ACS_CONSTANTS,

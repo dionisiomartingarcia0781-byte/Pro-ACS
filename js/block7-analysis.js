@@ -49,7 +49,7 @@ const ACS_BLOCK7_CONSTANTS =
       1e-9,
 
     VERSION:
-      "1.3.0"
+      "1.4.0"
   });
 
 
@@ -824,8 +824,25 @@ function calculateSystemHeatingTime(
       context.config
     ),
 
-    recirculationFlowLPerMinute: 0,
-    lossPercent: 0,
+    networkLosses: {
+      acsPowerW: 0,
+      returnPowerW: 0,
+      recirculationSchedule:
+        Array(24).fill(false),
+      intermittentUseFactor:
+        0.3
+    },
+
+    tanks:
+      context.config
+        .tanks
+        .map(
+          tank => ({
+            ...cloneObject(tank),
+            standingLossPowerW: 0
+          })
+        ),
+
     sanitaryCheck: false
   };
 
@@ -1043,12 +1060,12 @@ function createHeatingTimeResults(
     },
 
     note:
-      "Los tiempos individuales se simulan desde la temperatura de red hasta la temperatura de acumulación, sin consumos, recirculación ni pérdidas, actualizando durante toda la carga la potencia efectiva de cada intercambiador.",
+      "El tiempo mínimo de calentamiento de cada depósito se obtiene de forma individual, desde la temperatura de red hasta la temperatura de acumulación, sin consumos, recirculación ni pérdidas y suponiendo que el generador puede aportar toda la potencia requerida por el intercambiador. La potencia disponible media corresponde a la capacidad térmica del intercambiador y no está limitada por el generador.",
 
     totalNote:
       systemHeating.reachedFullLoad
         ? (
-            "El tiempo total del sistema se obtiene mediante una simulación conjunta desde depósitos vacíos, respetando la potencia del generador, la prioridad de carga, la potencia disponible y la corrección dinámica de cada intercambiador."
+            "El tiempo de calentamiento conjunto se obtiene mediante una simulación desde depósitos vacíos, respetando la potencia disponible del generador, la prioridad de carga, la potencia térmica disponible y la corrección dinámica de cada intercambiador."
           )
         : (
             "No ha sido posible determinar un tiempo total hasta el 100 % porque el sistema no ha completado la carga en la simulación teórica conjunta."
@@ -1544,9 +1561,27 @@ function createGeneralResults(
     energy
       .requestedDemandEnergyKWh;
 
-  const recirculationLossKWh =
-    energy
-      .recirculationLossKWh;
+  const networkLossesKWh =
+    finiteOrFallback(
+      energy
+        .recirculationLossKWh,
+      0
+    );
+
+  const tankStandingLossesKWh =
+    finiteOrFallback(
+      energy
+        .tankStandingLossKWh,
+      0
+    );
+
+  const totalLossesKWh =
+    finiteOrFallback(
+      energy
+        .totalLossKWh,
+      networkLossesKWh +
+      tankStandingLossesKWh
+    );
 
   const systemMinimumLoad =
     calculateSystemMinimumLoad(
@@ -1566,7 +1601,11 @@ function createGeneralResults(
           .coveredDemandEnergyKWh,
 
       lossesKWh:
-        recirculationLossKWh,
+        totalLossesKWh,
+
+      networkLossesKWh,
+
+      tankStandingLossesKWh,
 
       lossesPercentOfDemand:
         energy
@@ -1574,7 +1613,7 @@ function createGeneralResults(
 
       demandPlusLossesKWh:
         requestedDemandEnergyKWh +
-        recirculationLossKWh,
+        totalLossesKWh,
 
       generatedKWh:
         energy
@@ -2309,7 +2348,7 @@ function createComfortAssessment(
  * ============================================================ */
 
 /**
- * Clasifica las pérdidas por recirculación.
+ * Clasifica las pérdidas térmicas totales.
  *
  * < 5 %:
  * bajas.
@@ -2333,11 +2372,26 @@ function createLossesAssessment(
       0
     );
 
-  const lossEnergyKWh =
+  const networkLossEnergyKWh =
     finiteOrFallback(
       energy
         .recirculationLossKWh,
       0
+    );
+
+  const tankStandingLossEnergyKWh =
+    finiteOrFallback(
+      energy
+        .tankStandingLossKWh,
+      0
+    );
+
+  const lossEnergyKWh =
+    finiteOrFallback(
+      energy
+        .totalLossKWh,
+      networkLossEnergyKWh +
+      tankStandingLossEnergyKWh
     );
 
   let status;
@@ -2362,16 +2416,22 @@ function createLossesAssessment(
       "Pérdidas bajas";
 
     message =
-      "Las pérdidas por recirculación representan un porcentaje reducido de la demanda energética.";
+      "Las pérdidas térmicas totales representan un porcentaje reducido de la demanda energética.";
 
     recommendation =
       null;
 
     reportText =
-      `Las pérdidas energéticas asociadas a la recirculación representan el ${formatNumber(
+      `Las pérdidas térmicas totales representan el ${formatNumber(
         lossPercentage,
         2
-      )} % de la demanda energética, considerándose bajas para el periodo analizado.`;
+      )} % de la demanda energética: ${formatNumber(
+        tankStandingLossEnergyKWh,
+        2
+      )} kWh corresponden a los depósitos y ${formatNumber(
+        networkLossEnergyKWh,
+        2
+      )} kWh a la red. Se consideran bajas para el periodo analizado.`;
 
   } else if (
     lossPercentage <=
@@ -2388,16 +2448,22 @@ function createLossesAssessment(
       "Pérdidas habituales";
 
     message =
-      "Las pérdidas por recirculación se sitúan dentro del rango definido como habitual.";
+      "Las pérdidas térmicas totales se sitúan dentro del rango definido como habitual.";
 
     recommendation =
       null;
 
     reportText =
-      `Las pérdidas energéticas asociadas a la recirculación representan el ${formatNumber(
+      `Las pérdidas térmicas totales representan el ${formatNumber(
         lossPercentage,
         2
-      )} % de la demanda energética, situándose dentro del rango definido como habitual.`;
+      )} % de la demanda energética: ${formatNumber(
+        tankStandingLossEnergyKWh,
+        2
+      )} kWh corresponden a los depósitos y ${formatNumber(
+        networkLossEnergyKWh,
+        2
+      )} kWh a la red. Se sitúan dentro del rango definido como habitual.`;
 
   } else {
     status =
@@ -2410,16 +2476,22 @@ function createLossesAssessment(
       "Pérdidas altas";
 
     message =
-      "Las pérdidas por recirculación representan una parte importante de la demanda energética.";
+      "Las pérdidas térmicas totales representan una parte importante de la demanda energética.";
 
     recommendation =
-      "Se recomienda revisar el caudal de recirculación, el aislamiento de las tuberías y el funcionamiento del circuito.";
+      "Se recomienda revisar las pérdidas propias de los depósitos, el aislamiento de las redes y el horario de recirculación.";
 
     reportText =
-      `Las pérdidas energéticas asociadas a la recirculación representan el ${formatNumber(
+      `Las pérdidas térmicas totales representan el ${formatNumber(
         lossPercentage,
         2
-      )} % de la demanda energética. Este valor se considera elevado, por lo que se recomienda revisar el caudal de recirculación, el aislamiento de las tuberías y el funcionamiento del circuito.`;
+      )} % de la demanda energética: ${formatNumber(
+        tankStandingLossEnergyKWh,
+        2
+      )} kWh corresponden a los depósitos y ${formatNumber(
+        networkLossEnergyKWh,
+        2
+      )} kWh a la red. Este valor se considera elevado, por lo que se recomienda revisar las pérdidas propias de los depósitos, el aislamiento de las redes y el horario de recirculación.`;
   }
 
   return {
@@ -2438,6 +2510,10 @@ function createLossesAssessment(
     lossPercentage,
 
     lossEnergyKWh,
+
+    networkLossEnergyKWh,
+
+    tankStandingLossEnergyKWh,
 
     message,
 
@@ -2961,7 +3037,7 @@ function createConclusions(
         .level,
 
     title:
-      "Pérdidas por recirculación",
+      "Pérdidas totales",
 
     text:
       assessments
@@ -3003,7 +3079,7 @@ function createConclusions(
       "info",
 
     title:
-      "Tiempo de calentamiento",
+      "Criterios de calentamiento",
 
     text:
       heatingTimes.note
@@ -3086,10 +3162,61 @@ function createReportData(
             .startThresholdPercent
       },
 
-      recirculation: {
-        flowLPerMinute:
+      losses: {
+        network: {
+          acsPowerW:
+            finiteOrFallback(
+              context.config
+                .networkLosses
+                ?.acsPowerW,
+              0
+            ),
+
+          returnPowerW:
+            finiteOrFallback(
+              context.config
+                .networkLosses
+                ?.returnPowerW,
+              0
+            ),
+
+          recirculationSchedule:
+            Array.isArray(
+              context.config
+                .networkLosses
+                ?.recirculationSchedule
+            )
+              ? context.config
+                  .networkLosses
+                  .recirculationSchedule
+                  .map(Boolean)
+              : [],
+
+          intermittentUseFactor:
+            finiteOrFallback(
+              context.config
+                .networkLosses
+                ?.intermittentUseFactor,
+              0.3
+            )
+        },
+
+        tanks:
           context.config
-            .recirculationFlowLPerMinute
+            .tanks
+            .map(
+              tank => ({
+                id:
+                  tank.id,
+
+                standingLossPowerW:
+                  finiteOrFallback(
+                    tank
+                      .standingLossPowerW,
+                    0
+                  )
+              })
+            )
       },
 
       sanitaryCheck:
@@ -3114,6 +3241,13 @@ function createReportData(
               exchangerPowerKW:
                 tank
                   .exchangerPowerKW,
+
+              standingLossPowerW:
+                finiteOrFallback(
+                  tank
+                    .standingLossPowerW,
+                  0
+                ),
 
               nominalPrimaryInletTemperatureC:
                 tank
@@ -3200,6 +3334,10 @@ function createReportData(
       "La carga mínima del conjunto se calcula como la relación entre la energía total almacenada y la capacidad energética total de todos los depósitos. No se suman porcentajes individuales.",
 
       "Los resultados corresponden exclusivamente a las últimas 24 horas de simulación. Las primeras 24 horas se utilizan como periodo de estabilización.",
+
+      "Las pérdidas propias de cada depósito se aplican durante las 24 horas. Con recirculación activa se computa el 100 % de las pérdidas declaradas para las redes de ACS y retorno. Con la recirculación parada, la red de ACS se estima mediante un factor interno del 30 % ponderado por la intensidad del perfil horario; la red de retorno no genera pérdidas en ese estado.",
+
+      "El modelo no calcula el enfriamiento transitorio de cada ramal ni el volumen de agua desperdiciada durante la espera hasta alcanzar la temperatura de servicio.",
 
       "Los resultados obtenidos deben ser revisados y validados por el proyectista."
     ]
@@ -3413,10 +3551,7 @@ function renderGeneralResults(
   const generator =
     results.generator;
 
-  const hydraulics =
-    results.hydraulics;
-
-  const cards = [
+  const operationCards = [
     createResultCardHtml(
       "Demanda total",
       `${formatNumber(
@@ -3436,7 +3571,15 @@ function renderGeneralResults(
         energy
           .lossesPercentOfDemand,
         2
-      )} % de la demanda.`
+      )} % de la demanda · depósitos ${formatNumber(
+        energy
+          .tankStandingLossesKWh,
+        2
+      )} kWh · red ${formatNumber(
+        energy
+          .networkLossesKWh,
+        2
+      )} kWh.`
     ),
 
     createResultCardHtml(
@@ -3497,70 +3640,49 @@ function renderGeneralResults(
         generator.starts,
         0
       )} arranques durante el periodo.`
-    ),
-
-    createResultCardHtml(
-      "Caudal máximo de uso",
-      `${formatNumber(
-        hydraulics
-          .maximumUseFlowLPerMinute,
-        2
-      )} L/min`,
-      "Caudal equivalente a la temperatura de uso."
-    ),
-
-    createResultCardHtml(
-      "Caudal total de retorno",
-      `${formatNumber(
-        hydraulics
-          .totalReturnFlowLPerMinute,
-        2
-      )} L/min`,
-      "Caudal total configurado en el circuito."
-    ),
-
-    createResultCardHtml(
-      "Retorno por depósitos",
-      `${formatNumber(
-        hydraulics
-          .averageTankReturnFlowLPerMinute,
-        2
-      )} L/min`,
-      `Media. Máximo: ${formatNumber(
-        hydraulics
-          .maximumTankReturnFlowLPerMinute,
-        2
-      )} L/min.`
     )
   ];
 
-  results.exchangers.forEach(
-    exchanger => {
-      cards.push(
+  const technicalCards =
+    results.exchangers.map(
+      exchanger =>
         createResultCardHtml(
-          `Intercambiador ${exchanger.tankId}`,
+          `Potencia disponible media · ${exchanger.tankId}`,
           `${formatNumber(
             exchanger.averageEffectivePowerKW,
             2
           )} kW`,
-
           `${formatNumber(
             exchanger.nominalPowerKW,
             2
           )} kW nominales · reducción media ${formatNumber(
             exchanger.deratingPercent,
             1
-          )} % · ${formatNumber(
-            exchanger.generatedEnergyKWh,
-            2
-          )} kWh generados.`
+          )} %. Capacidad térmica del intercambiador, no limitada por el generador.`
         )
-      );
-    }
-  );
+    );
 
-  container.innerHTML =
-    cards.join("");
+  container.innerHTML = `
+    <section class="results-group">
+      <div class="results-group__header">
+        <h4>Cobertura y funcionamiento real</h4>
+        <p>Balance, cobertura y operación durante las últimas 24 horas.</p>
+      </div>
+      <div class="results-group__grid">
+        ${operationCards.join("")}
+      </div>
+    </section>
+
+    <section class="results-group">
+      <div class="results-group__header">
+        <h4>Producto técnico y dimensionamiento</h4>
+        <p>Capacidad térmica disponible de los intercambiadores, independientemente del límite del generador.</p>
+      </div>
+      <div class="results-group__grid">
+        ${technicalCards.join("")}
+      </div>
+    </section>
+  `;
 }
 
 
@@ -3928,7 +4050,7 @@ function renderAssessments(
   renderAssessmentCard(
     "lossesAssessmentCard",
 
-    "Pérdidas por recirculación",
+    "Pérdidas totales",
 
     losses,
 
@@ -3936,6 +4058,22 @@ function renderAssessments(
       <strong>Pérdidas:</strong>
       ${formatNumber(
         losses.lossEnergyKWh,
+        2
+      )} kWh
+      <br>
+
+      <strong>Depósitos:</strong>
+      ${formatNumber(
+        losses
+          .tankStandingLossEnergyKWh,
+        2
+      )} kWh
+      <br>
+
+      <strong>Red:</strong>
+      ${formatNumber(
+        losses
+          .networkLossEnergyKWh,
         2
       )} kWh
       <br>

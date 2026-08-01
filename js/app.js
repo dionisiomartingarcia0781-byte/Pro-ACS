@@ -26,6 +26,8 @@
 const ACSAppState = {
   currentScreen: "project",
 
+  currentTechnicalTab: "demand",
+
   projectData: null,
 
   inputConfig: null,
@@ -103,6 +105,15 @@ function cacheDOMElements() {
 
   DOM.stepInputsButton =
     getElement("stepInputsButton");
+
+  DOM.stepStorageButton =
+    getElement("stepStorageButton");
+
+  DOM.stepLossesButton =
+    getElement("stepLossesButton");
+
+  DOM.stepGeneratorButton =
+    getElement("stepGeneratorButton");
 
   DOM.stepResultsButton =
     getElement("stepResultsButton");
@@ -195,6 +206,15 @@ function cacheDOMElements() {
 
   DOM.tank2Card =
     getElement("tank2Card");
+
+  DOM.d2StandingLossField =
+    getElement("d2StandingLossField");
+
+  DOM.d2StandingLossW =
+    getElement("d2StandingLossW");
+
+  DOM.recirculationSchedule =
+    getElement("recirculationSchedule");
 
   DOM.d1ExchangerType =
     getElement("d1ExchangerType");
@@ -453,6 +473,12 @@ function showScreen(screenName) {
   ACSAppState.currentScreen =
     screenName;
 
+  if (screenName === "inputs") {
+    showTechnicalPanels(
+      ACSAppState.currentTechnicalTab
+    );
+  }
+
   updateStepper(screenName);
 
   hideGlobalMessage();
@@ -493,12 +519,58 @@ function showScreen(screenName) {
 }
 
 
+function showTechnicalPanels(tabName) {
+  const allowedTabs = [
+    "demand",
+    "storage",
+    "losses",
+    "generator"
+  ];
+
+  if (!allowedTabs.includes(tabName)) {
+    return;
+  }
+
+  ACSAppState.currentTechnicalTab = tabName;
+
+  document
+    .querySelectorAll("[data-technical-tab]")
+    .forEach(panel => {
+      panel.hidden =
+        panel.dataset.technicalTab !== tabName;
+    });
+
+  const content = {
+    demand: ["Pestaña 2 de 6", "Demanda de ACS", "Define la demanda diaria y su distribución temporal."],
+    storage: ["Pestaña 3 de 6", "Depósitos y temperatura", "Configura las temperaturas, los depósitos y sus intercambiadores."],
+    losses: ["Pestaña 4 de 6", "Pérdidas", "Define las pérdidas térmicas de los depósitos y de las redes."],
+    generator: ["Pestaña 5 de 6", "Generador", "Configura la generación y sus criterios de control."]
+  }[tabName];
+
+  getElement("technicalTabEyebrow").textContent = content[0];
+  getElement("technicalTabTitle").textContent = content[1];
+  getElement("technicalTabDescription").textContent = content[2];
+}
+
+
+function showTechnicalTab(tabName) {
+  ACSAppState.currentTechnicalTab = tabName;
+  showScreen("inputs");
+  updateStepper(tabName);
+}
+
+
 /**
  * Actualiza el indicador de pasos.
  */
 function updateStepper(
   activeScreen
 ) {
+  const effectiveStep =
+    activeScreen === "inputs"
+      ? ACSAppState.currentTechnicalTab
+      : activeScreen;
+
   const steps = [
     {
       name: "project",
@@ -507,16 +579,34 @@ function updateStepper(
       order: 1
     },
     {
-      name: "inputs",
+      name: "demand",
       element:
         DOM.stepInputsButton,
       order: 2
     },
     {
+      name: "storage",
+      element:
+        DOM.stepStorageButton,
+      order: 3
+    },
+    {
+      name: "losses",
+      element:
+        DOM.stepLossesButton,
+      order: 4
+    },
+    {
+      name: "generator",
+      element:
+        DOM.stepGeneratorButton,
+      order: 5
+    },
+    {
       name: "results",
       element:
         DOM.stepResultsButton,
-      order: 3
+      order: 6
     }
   ];
 
@@ -524,14 +614,14 @@ function updateStepper(
     steps.find(
       step =>
         step.name ===
-        activeScreen
+        effectiveStep
     ).order;
 
   steps.forEach(
     step => {
       const isActive =
         step.name ===
-        activeScreen;
+        effectiveStep;
 
       const isCompleted =
         step.order <
@@ -1606,10 +1696,16 @@ function updateTank2Visibility() {
   DOM.tank2Card.hidden =
     !hasTwoTanks;
 
+  if (DOM.d2StandingLossField) {
+    DOM.d2StandingLossField.hidden =
+      !hasTwoTanks;
+  }
+
   const d2Fields = [
     getElement("d2VolumeL"),
     getElement("d2ExchangerPowerKW"),
-    DOM.d2ExchangerType
+    DOM.d2ExchangerType,
+    DOM.d2StandingLossW
   ];
 
   d2Fields.forEach(
@@ -1651,6 +1747,11 @@ function buildTankConfig(
     exchangerPowerKW:
       readNumber(
         `${prefix}ExchangerPowerKW`
+      ),
+
+    standingLossPowerW:
+      readNumber(
+        `${prefix}StandingLossW`
       )
   };
 
@@ -1685,6 +1786,30 @@ function buildTankConfig(
     );
 
   return tank;
+}
+
+
+/**
+ * Lee el horario diario de recirculación como 24 estados horarios.
+ */
+function readRecirculationSchedule() {
+  const rawValues =
+    String(
+      DOM.recirculationSchedule?.value || ""
+    )
+      .split(",")
+      .map(value => value.trim());
+
+  if (
+    rawValues.length !== 24 ||
+    rawValues.some(value => value !== "0" && value !== "1")
+  ) {
+    throw new Error(
+      "El horario de recirculación debe definir correctamente las 24 horas del día."
+    );
+  }
+
+  return rawValues.map(value => value === "1");
 }
 
 
@@ -1772,10 +1897,20 @@ function buildSimulationConfig() {
         "startThresholdPercent"
       ),
 
-    lossPercent:
-      readNumber(
-        "lossPercent"
-      ),
+    networkLosses: {
+      acsPowerW:
+        readNumber(
+          "acsNetworkLossPowerW"
+        ),
+
+      returnPowerW:
+        readNumber(
+          "returnNetworkLossPowerW"
+        ),
+
+      recirculationSchedule:
+        readRecirculationSchedule()
+    },
 
     sanitaryCheck:
       getElement(
@@ -1833,11 +1968,31 @@ function validateSimulationConfigBeforeEngine(
     );
   }
 
+  config.tanks.forEach(
+    (tank, index) => {
+      if (tank.standingLossPowerW < 0) {
+        throw new Error(
+          `Las pérdidas del depósito D${index + 1} no pueden ser negativas.`
+        );
+      }
+    }
+  );
+
   if (
-    config.lossPercent < 0
+    config.networkLosses.acsPowerW < 0 ||
+    config.networkLosses.returnPowerW < 0
   ) {
     throw new Error(
-      "El porcentaje de pérdidas no puede ser negativo."
+      "Las potencias de pérdidas de las redes no pueden ser negativas."
+    );
+  }
+
+  if (
+    !Array.isArray(config.networkLosses.recirculationSchedule) ||
+    config.networkLosses.recirculationSchedule.length !== 24
+  ) {
+    throw new Error(
+      "El horario de recirculación debe contener 24 estados horarios."
     );
   }
 
@@ -2192,21 +2347,25 @@ function renderOperatingSummary(
 
           const lossesKWh =
             Number.isFinite(
-              energy.recirculationLossKWh
+              energy.totalLossEnergyKWh
             )
-              ? energy.recirculationLossKWh
-              : null;
+              ? energy.totalLossEnergyKWh
+              : Number.isFinite(
+                  energy.recirculationLossKWh
+                )
+                ? energy.recirculationLossKWh
+                : null;
 
           const deliveredTotalKWh =
             Number.isFinite(
               energy.coveredDemandEnergyKWh
             ) &&
             Number.isFinite(
-              energy.recirculationLossKWh
+              lossesKWh
             )
               ? (
                   energy.coveredDemandEnergyKWh +
-                  energy.recirculationLossKWh
+                  lossesKWh
                 )
               : null;
 
@@ -2619,6 +2778,9 @@ function handleProjectSubmit(event) {
   ACSAppState.projectData =
     readProjectData();
 
+  ACSAppState.currentTechnicalTab =
+    "demand";
+
   renderProjectSummary(
     ACSAppState.projectData
   );
@@ -2793,6 +2955,10 @@ function createNewProject() {
   DOM.projectForm.reset();
 
   DOM.simulationForm.reset();
+
+  DOM.recirculationSchedule?.dispatchEvent(
+    new Event("input", { bubbles: true })
+  );
 
   getElement(
     "projectDate"
@@ -2984,7 +3150,7 @@ function getSerializableAppState() {
     currentInputs;
 
   return {
-    version: "1.3.0",
+    version: "1.4.0",
 
     project:
       currentProject,
@@ -3083,7 +3249,7 @@ function registerEventListeners() {
     .addEventListener(
       "click",
       () =>
-        showScreen("inputs")
+        showTechnicalTab("generator")
     );
 
   DOM.stepProjectButton
@@ -3108,8 +3274,26 @@ function registerEventListeners() {
           return;
         }
 
-        showScreen("inputs");
+        showTechnicalTab("demand");
       }
+    );
+
+  DOM.stepStorageButton
+    .addEventListener(
+      "click",
+      () => showTechnicalTab("storage")
+    );
+
+  DOM.stepLossesButton
+    .addEventListener(
+      "click",
+      () => showTechnicalTab("losses")
+    );
+
+  DOM.stepGeneratorButton
+    .addEventListener(
+      "click",
+      () => showTechnicalTab("generator")
     );
 
   DOM.stepResultsButton
@@ -3264,6 +3448,61 @@ function registerEventListeners() {
 /* ============================================================
  * INICIALIZACIÓN
  * ============================================================ */
+
+function initializeRecirculationScheduleEditor() {
+  const source =
+    document.getElementById("recirculationSchedule");
+  const container =
+    document.getElementById("recirculationHours");
+
+  if (!source || !container) {
+    return;
+  }
+
+  const readValues = () => {
+    const values = String(source.value)
+      .split(",")
+      .map(value => value.trim() === "1");
+
+    return values.length === 24
+      ? values
+      : Array(24).fill(true);
+  };
+
+  const render = () => {
+    const values = readValues();
+    container.innerHTML = "";
+
+    values.forEach((active, hour) => {
+      const label = document.createElement("label");
+      label.className = "recirculation-hour";
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = active;
+      checkbox.dataset.hour = String(hour);
+
+      checkbox.addEventListener("change", () => {
+        const nextValues = Array.from(
+          container.querySelectorAll('input[type="checkbox"]')
+        ).map(input => input.checked ? "1" : "0");
+
+        source.value = nextValues.join(",");
+        source.dispatchEvent(
+          new Event("input", { bubbles: true })
+        );
+      });
+
+      const text = document.createElement("span");
+      text.textContent = `${String(hour).padStart(2, "0")} h`;
+      label.append(checkbox, text);
+      container.appendChild(label);
+    });
+  };
+
+  source.addEventListener("input", render);
+  render();
+}
 
 function ensureGeneratorDynamicInputs() {
   const generatorPowerInput =
@@ -3429,6 +3668,8 @@ function ensureGeneratorDynamicInputs() {
 function initializeApplication() {
   ensureGeneratorDynamicInputs();
 
+  initializeRecirculationScheduleEditor();
+
   cacheDOMElements();
 
   registerEventListeners();
@@ -3488,6 +3729,14 @@ function initializeApplication() {
 
     refreshExchangerFields:
       updateAllExchangerVisibility,
+
+    refreshLossFields() {
+      updateTank2Visibility();
+
+      DOM.recirculationSchedule?.dispatchEvent(
+        new Event("input", { bubbles: true })
+      );
+    },
 
     getIntrahourDemandProfileType() {
       return DOM
