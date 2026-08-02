@@ -37,7 +37,7 @@
 
 const ACS_REPORT_CONFIG = Object.freeze({
   VERSION: "3.7.2",
-  SOFTWARE_VERSION: "Pro ACS 1.2",
+  SOFTWARE_VERSION: "PRO ACS 3.0",
   PAGE_COUNT: 14,
 
   PAGE: Object.freeze({
@@ -825,7 +825,7 @@ function drawHeader(sectionTitle) {
     color: colors.white
   });
 
-  doc.text("PRO ACS", ACS_REPORT_CONFIG.MARGIN.left, 8.5);
+  doc.text("PRO ACS 3.0", ACS_REPORT_CONFIG.MARGIN.left, 8.5);
 
   setFont({
     size: 8.3,
@@ -1368,7 +1368,7 @@ function drawCoverPage(data) {
     color: colors.white
   });
 
-  doc.text("PRO ACS", x, 29);
+  doc.text("PRO ACS 3.0", x, 29);
 
   setFont({
     size: 13,

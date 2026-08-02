@@ -2778,19 +2778,6 @@ function handleProjectSubmit(event) {
 
   hideGlobalMessage();
 
-  if (
-    !validateRequiredFields(
-      DOM.projectForm
-    )
-  ) {
-    showGlobalMessage(
-      "Revisa los datos generales del proyecto.",
-      "error"
-    );
-
-    return;
-  }
-
   ACSAppState.projectData =
     readProjectData();
 
@@ -3279,16 +3266,12 @@ function registerEventListeners() {
     .addEventListener(
       "click",
       () => {
-        if (
-          !ACSAppState.projectData
-        ) {
-          showGlobalMessage(
-            "Completa primero los datos generales del proyecto.",
-            "warning"
-          );
+        ACSAppState.projectData =
+          readProjectData();
 
-          return;
-        }
+        renderProjectSummary(
+          ACSAppState.projectData
+        );
 
         showTechnicalTab("demand");
       }
