@@ -2239,7 +2239,7 @@ function clearRenderedResults() {
     .innerHTML =
     `
       <tr>
-        <td colspan="9">
+        <td colspan="10">
           Sin resultados disponibles.
         </td>
       </tr>
@@ -2315,7 +2315,7 @@ function renderOperatingSummary(
       .innerHTML =
       `
         <tr>
-          <td colspan="9">
+          <td colspan="10">
             Sin resultados horarios disponibles.
           </td>
         </tr>
@@ -2452,10 +2452,26 @@ function renderOperatingSummary(
                 ).padStart(2, "0")}`
               : "—";
 
+          const scheduleHour =
+            Number.isInteger(hour.hourIndex)
+              ? hour.hourIndex % 24
+              : displayIndex;
+
+          const recirculationActive =
+            ACSAppState
+              .inputConfig
+              ?.networkLosses
+              ?.recirculationSchedule
+              ?.[scheduleHour] === true;
+
           return `
             <tr>
               <td>
                 ${startHour}:00–${endHour}:00
+              </td>
+
+              <td>
+                ${recirculationActive ? "Activa" : "Parada"}
               </td>
 
               <td>
